@@ -1,0 +1,15 @@
+{
+  "name": "ai-session-migrator",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Local-first desktop tool for migrating AI assistant sessions between providers.",
+  "scripts": {
+    "dev": "npm --workspace apps/desktop run dev",
+    "build": "npm --workspace apps/desktop run build",
+    "test": "npm --workspace apps/desktop run test"
+  },
+  "workspaces": [
+    "apps/desktop"
+  ],
+  "license": "MIT"
+}
