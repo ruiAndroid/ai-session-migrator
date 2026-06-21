@@ -4,8 +4,12 @@
   "version": "0.1.0",
   "description": "Local-first desktop tool for migrating AI assistant sessions between providers.",
   "scripts": {
-    "dev": "npm --workspace apps/desktop run dev",
-    "build": "npm --workspace apps/desktop run build",
+    "dev": "npm --workspace apps/desktop run desktop:dev",
+    "web:dev": "npm --workspace apps/desktop run dev",
+    "web:build": "npm --workspace apps/desktop run build",
+    "desktop:dev": "npm --workspace apps/desktop run desktop:dev",
+    "desktop:build": "npm --workspace apps/desktop run desktop:build",
+    "build": "npm --workspace apps/desktop run desktop:build",
     "test": "npm --workspace apps/desktop run test"
   },
   "workspaces": [

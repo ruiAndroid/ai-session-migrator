@@ -1,3 +1,5 @@
 fn main() {
-    tauri_build::build()
+    if cfg!(feature = "desktop") {
+        tauri_build::build();
+    }
 }

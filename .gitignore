@@ -1,9 +1,17 @@
 node_modules/
 dist/
 target/
+apps/desktop/dist/
+apps/desktop/src-tauri/target/
 .vite/
 .turbo/
 .superpowers/
+.env
+.env.*
+!.env.example
+ai-session-migrator-backup-*/
+*.exe
+!apps/desktop/src-tauri/icons/*.ico
 *.log
 *.tmp
 .DS_Store
