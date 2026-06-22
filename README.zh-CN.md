@@ -1,6 +1,6 @@
 # AI Session Migrator
 
-简体中文 | [English](README.md)
+简体中文 | [English](README.en.md)
 
 **AI Session Migrator** 是一个本地优先的桌面应用，用来把 Codex 会话从一个 AI provider 迁移到另一个 provider。
 
