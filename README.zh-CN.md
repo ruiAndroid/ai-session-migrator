@@ -2,6 +2,8 @@
 
 简体中文 | [English](README.en.md)
 
+![AI Session Migrator 产品预览](assets/github-social-preview.png)
+
 **AI Session Migrator** 是一个本地优先的桌面应用，用来把 Codex 会话从一个 AI provider 迁移到另一个 provider。
 
 它可以扫描本机 Codex Desktop 会话，选择来源 provider 和目标 provider，预览变更，自动创建备份，并把选中的会话迁移到新的 provider。整个过程都在本机完成，不上传你的会话数据。

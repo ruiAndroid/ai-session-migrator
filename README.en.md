@@ -2,6 +2,8 @@
 
 [简体中文](README.md) | English
 
+![AI Session Migrator product preview](assets/github-social-preview.png)
+
 **AI Session Migrator** is a local-first desktop app for migrating Codex sessions between AI providers.
 
 It helps you scan local Codex Desktop sessions, choose a source provider, preview the change, create backups, and migrate selected sessions to your target provider without uploading your conversation data anywhere.
