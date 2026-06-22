@@ -1,8 +1,11 @@
-#![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
+#![cfg_attr(
+    all(target_os = "windows", not(debug_assertions)),
+    windows_subsystem = "windows"
+)]
 
 use ai_session_migrator::codex::{
-    self, CommandError, DeleteArchivedRequest, DeleteArchivedResult, MigrationRequest,
-    MigrationResult, ScanResponse,
+    self, ArchiveRequest, ArchiveResult, CommandError, DeleteArchivedRequest, DeleteArchivedResult,
+    MigrationRequest, MigrationResult, ProviderRestartRequest, ProviderRestartResult, ScanResponse,
 };
 use std::process::Command;
 
@@ -50,6 +53,27 @@ fn apply_delete_archived_sessions(
 }
 
 #[tauri::command]
+fn apply_archive_sessions(
+    request: ArchiveRequest,
+) -> std::result::Result<ArchiveResult, CommandError> {
+    codex::apply_archive_sessions(request)
+}
+
+#[tauri::command]
+fn apply_activate_sessions(
+    request: ArchiveRequest,
+) -> std::result::Result<ArchiveResult, CommandError> {
+    codex::apply_activate_sessions(request)
+}
+
+#[tauri::command]
+fn switch_provider_and_restart(
+    request: ProviderRestartRequest,
+) -> std::result::Result<ProviderRestartResult, CommandError> {
+    codex::switch_provider_and_restart(request)
+}
+
+#[tauri::command]
 fn open_path(path: String) -> std::result::Result<(), String> {
     let trimmed_path = path.trim();
     if trimmed_path.is_empty() {
@@ -86,6 +110,9 @@ fn main() {
             apply_provider_migration,
             preview_delete_archived_sessions,
             apply_delete_archived_sessions,
+            apply_archive_sessions,
+            apply_activate_sessions,
+            switch_provider_and_restart,
             open_path
         ])
         .run(tauri::generate_context!())

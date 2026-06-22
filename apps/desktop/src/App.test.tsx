@@ -97,6 +97,36 @@ const scanResponseAfterMigration: ScanResponse = {
   }
 };
 
+const scanResponseAfterArchive: ScanResponse = {
+  ...scanResponse,
+  dashboard: {
+    ...scanResponse.dashboard,
+    rows: [
+      {
+        ...scanResponse.dashboard.rows[0],
+        lifecycle: "archived",
+        path: `${fixtureCodexHome}\\archived_sessions\\rollout-a.jsonl`
+      },
+      scanResponse.dashboard.rows[1]
+    ]
+  }
+};
+
+const scanResponseAfterActivate: ScanResponse = {
+  ...scanResponse,
+  dashboard: {
+    ...scanResponse.dashboard,
+    rows: [
+      scanResponse.dashboard.rows[0],
+      {
+        ...scanResponse.dashboard.rows[1],
+        lifecycle: "active",
+        path: `${fixtureCodexHome}\\sessions\\2026\\06\\17\\rollout-b.jsonl`
+      }
+    ]
+  }
+};
+
 function fakeApi(): MigrationApi {
   return {
     scanCodexHome: vi.fn().mockResolvedValue(scanResponse),
@@ -127,6 +157,22 @@ function fakeApi(): MigrationApi {
       deletedThreads: [archivedThreadId],
       backupDir: `${fixtureCodexHome}\\ai-session-migrator-backup-20260617-130000`,
       dryRun: false
+    }),
+    applyArchiveSessions: vi.fn().mockResolvedValue({
+      changedThreads: [activeThreadId],
+      backupDir: `${fixtureCodexHome}\\ai-session-migrator-backup-20260617-150000`
+    }),
+    applyActivateSessions: vi.fn().mockResolvedValue({
+      changedThreads: [archivedThreadId],
+      backupDir: `${fixtureCodexHome}\\ai-session-migrator-backup-20260617-160000`
+    }),
+    switchProviderAndRestart: vi.fn().mockResolvedValue({
+      configuredProvider: "yihubangg",
+      previousProvider: "funai",
+      configBackupDir: `${fixtureCodexHome}\\ai-session-migrator-backup-20260617-140000`,
+      restartAttempted: true,
+      restarted: true,
+      restartMessage: "Codex 已按新 provider 配置重新启动。"
     })
   };
 }
@@ -173,6 +219,34 @@ test("scan shows active sessions before archived sessions with lifecycle badges"
   expect(within(archivedRow).getByText("已归档")).toBeInTheDocument();
   expect(activeRow.compareDocumentPosition(archivedRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(screen.getByText("2 个可见，2 个已选")).toBeInTheDocument();
+});
+
+test("session list separates time and actions columns", async () => {
+  const { user } = await renderWorkflow();
+
+  await user.click(screen.getByRole("button", { name: /扫描会话/ }));
+  await user.selectOptions(screen.getByLabelText("来源 provider"), "__all__");
+
+  expect(screen.getByText("时间")).toBeInTheDocument();
+  expect(screen.getByText("操作")).toBeInTheDocument();
+  expect(screen.queryByText("时间与操作")).not.toBeInTheDocument();
+});
+
+test("advanced session details open in a dialog", async () => {
+  const { user } = await renderWorkflow();
+
+  await user.click(screen.getByRole("button", { name: /扫描会话/ }));
+  const activeRow = await screen.findByRole("article", { name: "活跃 provider 会话" });
+  await user.click(within(activeRow).getByRole("button", { name: "高级信息" }));
+
+  const dialog = screen.getByRole("dialog", { name: "活跃 provider 会话 高级信息" });
+  expect(dialog).toHaveTextContent(activeThreadId);
+  expect(dialog).toHaveTextContent("funai -> yihubangg");
+  expect(dialog).toHaveTextContent(`${fixtureCodexHome}\\sessions\\rollout-a.jsonl`);
+  expect(within(activeRow).queryByText(`ID: ${activeThreadId}`)).not.toBeInTheDocument();
+
+  await user.click(within(dialog).getByRole("button", { name: "关闭" }));
+  expect(screen.queryByRole("dialog", { name: "活跃 provider 会话 高级信息" })).not.toBeInTheDocument();
 });
 
 test("preview sends selected visible rows and target provider to the API", async () => {
@@ -296,4 +370,124 @@ test("delete archived sessions requires confirmation and removes only archived r
   expect(desktopActions.copyText).toHaveBeenCalledWith(
     `${fixtureCodexHome}\\ai-session-migrator-backup-20260617-130000`
   );
+});
+
+test("successful migration can switch Codex provider and restart after confirmation", async () => {
+  const api = fakeApi();
+  vi.mocked(api.scanCodexHome)
+    .mockResolvedValueOnce(scanResponse)
+    .mockResolvedValueOnce(scanResponseAfterMigration);
+  const { user } = await renderWorkflow(api);
+
+  await user.click(screen.getByRole("button", { name: /扫描会话/ }));
+  await screen.findByText("活跃 provider 会话");
+  await user.selectOptions(screen.getByLabelText("来源 provider"), "funai");
+  await user.click(screen.getByRole("button", { name: /预览迁移/ }));
+  await waitFor(() => {
+    expect(api.previewProviderMigration).toHaveBeenCalled();
+  });
+  await user.click(screen.getByRole("button", { name: /确认迁移/ }));
+  await user.click(within(screen.getByRole("dialog", { name: "确认迁移" })).getByRole("button", { name: "确认迁移" }));
+
+  const completion = await screen.findByRole("status");
+  await user.click(within(completion).getByRole("button", { name: "切换并重启 Codex" }));
+
+  const dialog = screen.getByRole("dialog", { name: "切换并重启 Codex" });
+  expect(dialog).toHaveTextContent("目标 provider");
+  expect(dialog).toHaveTextContent("yihubangg");
+  expect(api.switchProviderAndRestart).not.toHaveBeenCalled();
+
+  await user.click(within(dialog).getByRole("button", { name: "确认重启" }));
+
+  await waitFor(() => {
+    expect(api.switchProviderAndRestart).toHaveBeenCalledWith({
+      codexHome: fixtureCodexHome,
+      targetProvider: "yihubangg"
+    });
+  });
+  expect(screen.getByRole("status")).toHaveTextContent("Codex 已按新 provider 配置重新启动。");
+});
+
+test("active session item can be archived after confirmation", async () => {
+  const api = fakeApi();
+  vi.mocked(api.scanCodexHome).mockResolvedValueOnce(scanResponse).mockResolvedValueOnce(scanResponseAfterArchive);
+  const { user } = await renderWorkflow(api);
+
+  await user.click(screen.getByRole("button", { name: /扫描会话/ }));
+  const activeRow = await screen.findByRole("article", { name: "活跃 provider 会话" });
+  await user.click(within(activeRow).getByRole("button", { name: "归档" }));
+
+  const dialog = screen.getByRole("dialog", { name: "确认归档会话" });
+  expect(dialog).toHaveTextContent("将归档 1 个活跃会话");
+  expect(api.applyArchiveSessions).not.toHaveBeenCalled();
+
+  await user.click(within(dialog).getByRole("button", { name: "确认归档" }));
+
+  await waitFor(() => {
+    expect(api.applyArchiveSessions).toHaveBeenCalledWith({
+      codexHome: fixtureCodexHome,
+      threadIds: [activeThreadId]
+    });
+  });
+  await waitFor(() => {
+    expect(api.scanCodexHome).toHaveBeenCalledTimes(2);
+  });
+  const archivedRow = screen.getByRole("article", { name: "活跃 provider 会话" });
+  expect(within(archivedRow).getByText("已归档")).toBeInTheDocument();
+  expect(within(archivedRow).getByRole("button", { name: "激活" })).toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent("已归档 1 个会话");
+});
+
+test("archived session item can be activated after confirmation", async () => {
+  const api = fakeApi();
+  vi.mocked(api.scanCodexHome).mockResolvedValueOnce(scanResponse).mockResolvedValueOnce(scanResponseAfterActivate);
+  const { user } = await renderWorkflow(api);
+
+  await user.click(screen.getByRole("button", { name: /扫描会话/ }));
+  await user.selectOptions(screen.getByLabelText("来源 provider"), "__all__");
+  const archivedRow = await screen.findByRole("article", { name: "归档 provider 会话" });
+  await user.click(within(archivedRow).getByRole("button", { name: "激活" }));
+
+  const dialog = screen.getByRole("dialog", { name: "确认激活会话" });
+  expect(dialog).toHaveTextContent("将激活 1 个已归档会话");
+  expect(api.applyActivateSessions).not.toHaveBeenCalled();
+
+  await user.click(within(dialog).getByRole("button", { name: "确认激活" }));
+
+  await waitFor(() => {
+    expect(api.applyActivateSessions).toHaveBeenCalledWith({
+      codexHome: fixtureCodexHome,
+      threadIds: [archivedThreadId]
+    });
+  });
+  await waitFor(() => {
+    expect(api.scanCodexHome).toHaveBeenCalledTimes(2);
+  });
+  const activatedRow = screen.getByRole("article", { name: "归档 provider 会话" });
+  expect(within(activatedRow).getByText("活跃")).toBeInTheDocument();
+  expect(within(activatedRow).getByRole("button", { name: "归档" })).toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent("已激活 1 个会话");
+});
+
+test("archived session item can be deleted without selecting every archived row", async () => {
+  const api = fakeApi();
+  const { user } = await renderWorkflow(api);
+
+  await user.click(screen.getByRole("button", { name: /扫描会话/ }));
+  await user.selectOptions(screen.getByLabelText("来源 provider"), "__all__");
+  const archivedRow = await screen.findByRole("article", { name: "归档 provider 会话" });
+  await user.click(within(archivedRow).getByRole("button", { name: "删除" }));
+
+  const dialog = screen.getByRole("dialog", { name: /delete archived sessions/i });
+  expect(dialog).toHaveTextContent("将删除 1 个已归档会话");
+
+  await user.click(within(dialog).getByTestId("confirm-delete-archived"));
+
+  await waitFor(() => {
+    expect(api.applyDeleteArchivedSessions).toHaveBeenCalledWith({
+      codexHome: fixtureCodexHome,
+      threadIds: [archivedThreadId]
+    });
+  });
+  expect(screen.queryByRole("article", { name: "归档 provider 会话" })).not.toBeInTheDocument();
 });

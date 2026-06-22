@@ -1,5 +1,7 @@
 import {
   AlertTriangle,
+  Archive,
+  ArchiveRestore,
   ArrowRight,
   ArrowRightLeft,
   CheckCircle2,
@@ -10,6 +12,7 @@ import {
   FolderOpen,
   HardDrive,
   ListFilter,
+  Power,
   RefreshCw,
   Search,
   ShieldCheck,
@@ -25,6 +28,7 @@ import type {
   CommandError,
   MigrationRequest,
   MigrationResult,
+  ProviderRestartResult,
   ScanResponse,
   ThreadRow
 } from "./domain/session";
@@ -41,7 +45,12 @@ type AppProps = {
   resolveDefaultCodexHome?: DefaultCodexHomeResolver;
 };
 
-type LoadingState = "idle" | "scan" | "preview" | "apply" | "delete";
+type LoadingState = "idle" | "scan" | "preview" | "apply" | "delete" | "archive" | "restart";
+
+type PendingLifecycleAction = {
+  action: "archive" | "activate";
+  row: ThreadRow;
+};
 
 type DisplayError = {
   message: string;
@@ -52,6 +61,8 @@ type DisplayError = {
 type CompletionNotice = {
   message: string;
   backupDir?: string | null;
+  restartTargetProvider?: string | null;
+  restartResult?: ProviderRestartResult | null;
 };
 
 export default function App({
@@ -66,14 +77,16 @@ export default function App({
   const [targetChoice, setTargetChoice] = useState("");
   const [customTargetProvider, setCustomTargetProvider] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [expandedIds, setExpandedIds] = useState<string[]>([]);
+  const [detailsRow, setDetailsRow] = useState<ThreadRow | null>(null);
   const [previewResult, setPreviewResult] = useState<MigrationResult | null>(null);
   const [previewRequestKey, setPreviewRequestKey] = useState("");
   const [completionNotice, setCompletionNotice] = useState<CompletionNotice | null>(null);
   const [loading, setLoading] = useState<LoadingState>("idle");
   const [error, setError] = useState<DisplayError | null>(null);
   const [confirmingApply, setConfirmingApply] = useState(false);
-  const [confirmingDeleteArchived, setConfirmingDeleteArchived] = useState(false);
+  const [pendingDeleteArchivedThreadIds, setPendingDeleteArchivedThreadIds] = useState<string[] | null>(null);
+  const [pendingLifecycleAction, setPendingLifecycleAction] = useState<PendingLifecycleAction | null>(null);
+  const [confirmingRestart, setConfirmingRestart] = useState(false);
 
   const rows = scanResponse?.dashboard.rows ?? [];
   const sourceProviderChoices = useMemo(
@@ -161,7 +174,7 @@ export default function App({
       setTargetChoice(firstTarget);
       setCustomTargetProvider("");
       setSelectedIds(threadIdsForSource(response.dashboard.rows, defaultSourceProvider));
-      setExpandedIds([]);
+      setDetailsRow(null);
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -211,7 +224,9 @@ export default function App({
         await refreshScanAfterMigration(request.sourceProvider, result.changedThreads);
         setCompletionNotice({
           message: `已完成迁移 ${result.changedThreads.length} 个会话`,
-          backupDir: result.backupDir
+          backupDir: result.backupDir,
+          restartTargetProvider: request.targetProvider,
+          restartResult: null
         });
       }
     } catch (caught) {
@@ -223,20 +238,81 @@ export default function App({
 
   function handleDeleteArchived() {
     if (canDeleteArchived) {
-      setConfirmingDeleteArchived(true);
+      clearRunResults();
+      setPendingDeleteArchivedThreadIds(deleteArchivedThreadIds);
+    }
+  }
+
+  function handleDeleteArchivedRow(row: ThreadRow) {
+    if (row.lifecycle === "archived" && loading === "idle") {
+      clearRunResults();
+      setPendingDeleteArchivedThreadIds([row.threadId]);
+    }
+  }
+
+  function handleArchiveRow(row: ThreadRow) {
+    if (row.lifecycle === "active" && loading === "idle") {
+      clearRunResults();
+      setPendingLifecycleAction({ action: "archive", row });
+    }
+  }
+
+  function handleActivateRow(row: ThreadRow) {
+    if (row.lifecycle === "archived" && loading === "idle") {
+      clearRunResults();
+      setPendingLifecycleAction({ action: "activate", row });
+    }
+  }
+
+  function handleRestartCodex() {
+    if (completionNotice?.restartTargetProvider && loading === "idle") {
+      setConfirmingRestart(true);
+    }
+  }
+
+  async function confirmRestartCodex() {
+    const targetProvider = completionNotice?.restartTargetProvider;
+    if (!targetProvider) {
+      setConfirmingRestart(false);
+      return;
+    }
+    setConfirmingRestart(false);
+    setLoading("restart");
+    setError(null);
+    try {
+      const result = await migrationApi.switchProviderAndRestart({
+        codexHome: codexHome.trim(),
+        targetProvider
+      });
+      setCompletionNotice((current) =>
+        current
+          ? {
+              ...current,
+              message: result.restartMessage,
+              backupDir: result.configBackupDir ?? current.backupDir,
+              restartTargetProvider: null,
+              restartResult: result
+            }
+          : current
+      );
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setLoading("idle");
     }
   }
 
   async function confirmDeleteArchived() {
-    if (!canDeleteArchived) {
-      setConfirmingDeleteArchived(false);
+    const threadIds = pendingDeleteArchivedThreadIds ?? [];
+    if (!scanResponse || threadIds.length === 0 || loading !== "idle") {
+      setPendingDeleteArchivedThreadIds(null);
       return;
     }
     const request = {
       codexHome: codexHome.trim(),
-      threadIds: deleteArchivedThreadIds
+      threadIds
     };
-    setConfirmingDeleteArchived(false);
+    setPendingDeleteArchivedThreadIds(null);
     setLoading("delete");
     setError(null);
     setPreviewResult(null);
@@ -247,6 +323,42 @@ export default function App({
       removeDeletedRows(result.deletedThreads);
       setCompletionNotice({
         message: `已删除 ${result.deletedThreads.length} 个归档会话`,
+        backupDir: result.backupDir
+      });
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setLoading("idle");
+    }
+  }
+
+  async function confirmLifecycleAction() {
+    if (!pendingLifecycleAction || loading !== "idle") {
+      setPendingLifecycleAction(null);
+      return;
+    }
+    const pending = pendingLifecycleAction;
+    setPendingLifecycleAction(null);
+    setLoading("archive");
+    setError(null);
+    setPreviewResult(null);
+    setPreviewRequestKey("");
+    setCompletionNotice(null);
+    try {
+      const request = {
+        codexHome: codexHome.trim(),
+        threadIds: [pending.row.threadId]
+      };
+      const result =
+        pending.action === "archive"
+          ? await migrationApi.applyArchiveSessions(request)
+          : await migrationApi.applyActivateSessions(request);
+      await refreshScanAfterLifecycleChange(result.changedThreads);
+      setCompletionNotice({
+        message:
+          pending.action === "archive"
+            ? `已归档 ${result.changedThreads.length} 个会话`
+            : `已激活 ${result.changedThreads.length} 个会话`,
         backupDir: result.backupDir
       });
     } catch (caught) {
@@ -275,7 +387,7 @@ export default function App({
       };
     });
     setSelectedIds((current) => current.filter((threadId) => !deleted.has(threadId)));
-    setExpandedIds((current) => current.filter((threadId) => !deleted.has(threadId)));
+    setDetailsRow((current) => (current && deleted.has(current.threadId) ? null : current));
   }
 
   function toggleSession(threadId: string) {
@@ -296,10 +408,8 @@ export default function App({
     setSelectedIds((current) => current.filter((threadId) => !visible.has(threadId)));
   }
 
-  function toggleDetails(threadId: string) {
-    setExpandedIds((current) =>
-      current.includes(threadId) ? current.filter((item) => item !== threadId) : [...current, threadId]
-    );
+  function openDetails(row: ThreadRow) {
+    setDetailsRow(row);
   }
 
   function handleCodexHomeChange(value: string) {
@@ -311,13 +421,15 @@ export default function App({
 
   function clearMigrationContext() {
     setConfirmingApply(false);
-    setConfirmingDeleteArchived(false);
+    setPendingDeleteArchivedThreadIds(null);
+    setPendingLifecycleAction(null);
+    setConfirmingRestart(false);
     setScanResponse(null);
     setSourceProvider(ALL_SOURCES);
     setTargetChoice("");
     setCustomTargetProvider("");
     setSelectedIds([]);
-    setExpandedIds([]);
+    setDetailsRow(null);
     setPreviewResult(null);
     setPreviewRequestKey("");
     setCompletionNotice(null);
@@ -325,7 +437,9 @@ export default function App({
 
   function clearRunResults() {
     setConfirmingApply(false);
-    setConfirmingDeleteArchived(false);
+    setPendingDeleteArchivedThreadIds(null);
+    setPendingLifecycleAction(null);
+    setConfirmingRestart(false);
     setPreviewResult(null);
     setPreviewRequestKey("");
     setCompletionNotice(null);
@@ -334,6 +448,15 @@ export default function App({
   async function refreshScanAfterMigration(previousSourceProvider: string | null, changedThreads: string[]) {
     const refreshed = await migrationApi.scanCodexHome(codexHome.trim());
     const nextSourceProvider = previousSourceProvider ?? ALL_SOURCES;
+    applyRefreshedScan(refreshed, nextSourceProvider, changedThreads);
+  }
+
+  async function refreshScanAfterLifecycleChange(changedThreads: string[]) {
+    const refreshed = await migrationApi.scanCodexHome(codexHome.trim());
+    applyRefreshedScan(refreshed, sourceProvider, changedThreads);
+  }
+
+  function applyRefreshedScan(refreshed: ScanResponse, nextSourceProvider: string, changedThreads: string[]) {
     const existingThreadIds = new Set(refreshed.dashboard.rows.map((row) => row.threadId));
     const changedThreadIds = new Set(changedThreads);
     setScanResponse(refreshed);
@@ -341,7 +464,9 @@ export default function App({
     setSelectedIds((current) =>
       current.filter((threadId) => existingThreadIds.has(threadId) && !changedThreadIds.has(threadId))
     );
-    setExpandedIds((current) => current.filter((threadId) => existingThreadIds.has(threadId)));
+    setDetailsRow((current) =>
+      current && (!existingThreadIds.has(current.threadId) || changedThreadIds.has(current.threadId)) ? null : current
+    );
   }
 
   return (
@@ -491,7 +616,9 @@ export default function App({
         {completionNotice ? (
           <CompletionNoticePanel
             notice={completionNotice}
+            loading={loading}
             desktopActions={desktopActions}
+            onRestartCodex={handleRestartCodex}
             onActionError={(message) => setError({ message })}
           />
         ) : null}
@@ -549,17 +676,20 @@ export default function App({
               <div className="session-table-head" aria-hidden="true">
                 <span />
                 <span>会话详情</span>
-                <span>时间戳与 ID</span>
+                <span>时间</span>
+                <span>操作</span>
               </div>
               {visibleRows.map((row) => (
                 <SessionItem
                   key={row.threadId}
                   row={row}
-                  targetProvider={resolvedTargetProvider || "未选择"}
                   selected={selectedIds.includes(row.threadId)}
-                  expanded={expandedIds.includes(row.threadId)}
+                  disabled={loading !== "idle"}
                   onToggleSelected={() => toggleSession(row.threadId)}
-                  onToggleExpanded={() => toggleDetails(row.threadId)}
+                  onOpenDetails={() => openDetails(row)}
+                  onArchive={() => handleArchiveRow(row)}
+                  onActivate={() => handleActivateRow(row)}
+                  onDeleteArchived={() => handleDeleteArchivedRow(row)}
                 />
               ))}
               {visibleRows.length === 0 ? <div className="empty-state">{emptyVisibleRowsText(sourceProvider)}</div> : null}
@@ -579,11 +709,36 @@ export default function App({
         />
       ) : null}
 
-      {confirmingDeleteArchived ? (
+      {pendingDeleteArchivedThreadIds ? (
         <ConfirmDeleteArchivedDialog
-          deleteCount={deleteArchivedThreadIds.length}
-          onCancel={() => setConfirmingDeleteArchived(false)}
+          deleteCount={pendingDeleteArchivedThreadIds.length}
+          onCancel={() => setPendingDeleteArchivedThreadIds(null)}
           onConfirm={confirmDeleteArchived}
+        />
+      ) : null}
+
+      {pendingLifecycleAction ? (
+        <ConfirmLifecycleDialog
+          action={pendingLifecycleAction.action}
+          row={pendingLifecycleAction.row}
+          onCancel={() => setPendingLifecycleAction(null)}
+          onConfirm={confirmLifecycleAction}
+        />
+      ) : null}
+
+      {detailsRow ? (
+        <SessionDetailsDialog
+          row={detailsRow}
+          targetProvider={resolvedTargetProvider || "未选择"}
+          onClose={() => setDetailsRow(null)}
+        />
+      ) : null}
+
+      {confirmingRestart && completionNotice?.restartTargetProvider ? (
+        <ConfirmRestartDialog
+          targetProvider={completionNotice.restartTargetProvider}
+          onCancel={() => setConfirmingRestart(false)}
+          onConfirm={confirmRestartCodex}
         />
       ) : null}
     </main>
@@ -601,18 +756,22 @@ function Metric({ label, value }: { label: string; value: number }) {
 
 function SessionItem({
   row,
-  targetProvider,
   selected,
-  expanded,
+  disabled,
   onToggleSelected,
-  onToggleExpanded
+  onOpenDetails,
+  onArchive,
+  onActivate,
+  onDeleteArchived
 }: {
   row: ThreadRow;
-  targetProvider: string;
   selected: boolean;
-  expanded: boolean;
+  disabled: boolean;
   onToggleSelected: () => void;
-  onToggleExpanded: () => void;
+  onOpenDetails: () => void;
+  onArchive: () => void;
+  onActivate: () => void;
+  onDeleteArchived: () => void;
 }) {
   return (
     <article className="session-row" aria-label={row.displayName}>
@@ -637,26 +796,35 @@ function SessionItem({
           </div>
           <p>{issueSummary(row.issueCodes)}</p>
         </div>
-        {expanded ? (
-          <div className="advanced-details">
-            <span>ID: {row.threadId}</span>
-            <span>
-              Provider: {row.fileProvider ?? "未知"} -&gt; {targetProvider}
-            </span>
-            <span>类型: {lifecycleLabel(row.lifecycle)}</span>
-            <span>问题: {row.issueCodes.length > 0 ? row.issueCodes.join(", ") : "无"}</span>
-            <span>文件: {row.path}</span>
-          </div>
-        ) : null}
       </div>
 
       <div className="session-meta">
         <strong>{formatDate(row.updatedAtMs)}</strong>
         <small>{row.shortId}</small>
-        <button className="ghost-button" type="button" aria-expanded={expanded} onClick={onToggleExpanded}>
-          {expanded ? <ChevronDown aria-hidden="true" size={16} /> : <ChevronRight aria-hidden="true" size={16} />}
+        <button className="ghost-button" type="button" onClick={onOpenDetails}>
+          <ChevronRight aria-hidden="true" size={16} />
           高级信息
         </button>
+      </div>
+
+      <div className="session-actions" aria-label="会话操作">
+        {row.lifecycle === "active" ? (
+          <button className="row-action-button" type="button" disabled={disabled} onClick={onArchive}>
+            <Archive aria-hidden="true" size={15} />
+            归档
+          </button>
+        ) : (
+          <>
+            <button className="row-action-button" type="button" disabled={disabled} onClick={onActivate}>
+              <ArchiveRestore aria-hidden="true" size={15} />
+              激活
+            </button>
+            <button className="row-action-button danger" type="button" disabled={disabled} onClick={onDeleteArchived}>
+              <Trash2 aria-hidden="true" size={15} />
+              删除
+            </button>
+          </>
+        )}
       </div>
     </article>
   );
@@ -698,11 +866,15 @@ function ResultPanel({ title, result }: { title: string; result: MigrationResult
 
 function CompletionNoticePanel({
   notice,
+  loading,
   desktopActions,
+  onRestartCodex,
   onActionError
 }: {
   notice: CompletionNotice;
+  loading: LoadingState;
   desktopActions: DesktopActions;
+  onRestartCodex: () => void;
   onActionError: (message: string) => void;
 }) {
   async function handleCopyBackup() {
@@ -735,17 +907,37 @@ function CompletionNoticePanel({
       <div className="completion-copy">
         <strong>{notice.message}</strong>
         {notice.backupDir ? <span>{notice.backupDir}</span> : <span>本次操作未生成备份目录。</span>}
+        {notice.restartResult ? (
+          <span className={notice.restartResult.restarted ? "restart-result" : "restart-result warning"}>
+            {notice.restartResult.restarted ? "已重启 Codex" : "请手动重启 Codex"}
+          </span>
+        ) : null}
       </div>
-      {notice.backupDir ? (
+      {notice.backupDir || notice.restartTargetProvider ? (
         <div className="completion-actions">
-          <button className="ghost-button" type="button" onClick={handleCopyBackup}>
-            <Copy aria-hidden="true" size={15} />
-            复制备份路径
-          </button>
-          <button className="ghost-button" type="button" onClick={handleOpenBackup}>
-            <FolderOpen aria-hidden="true" size={15} />
-            打开备份目录
-          </button>
+          {notice.restartTargetProvider ? (
+            <button
+              className="ghost-button restart-button"
+              type="button"
+              disabled={loading !== "idle"}
+              onClick={onRestartCodex}
+            >
+              <Power aria-hidden="true" size={15} />
+              {loading === "restart" ? "正在重启 Codex" : "切换并重启 Codex"}
+            </button>
+          ) : null}
+          {notice.backupDir ? (
+            <>
+              <button className="ghost-button" type="button" onClick={handleCopyBackup}>
+                <Copy aria-hidden="true" size={15} />
+                复制备份路径
+              </button>
+              <button className="ghost-button" type="button" onClick={handleOpenBackup}>
+                <FolderOpen aria-hidden="true" size={15} />
+                打开备份目录
+              </button>
+            </>
+          ) : null}
         </div>
       ) : null}
     </section>
@@ -809,6 +1001,162 @@ function ConfirmMigrationDialog({
           <button className="primary-button" type="button" onClick={onConfirm}>
             <ShieldCheck aria-hidden="true" size={17} />
             确认迁移
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ConfirmRestartDialog({
+  targetProvider,
+  onCancel,
+  onConfirm
+}: {
+  targetProvider: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="modal-backdrop">
+      <section aria-labelledby="confirm-restart-title" aria-modal="true" className="confirm-dialog" role="dialog">
+        <div className="confirm-dialog-header">
+          <span className="confirm-dialog-icon">
+            <Power aria-hidden="true" size={20} />
+          </span>
+          <div>
+            <p className="eyebrow">重启前确认</p>
+            <h3 id="confirm-restart-title">切换并重启 Codex</h3>
+          </div>
+        </div>
+        <div className="confirm-dialog-body">
+          <p>
+            目标 provider：<strong>{targetProvider}</strong>
+          </p>
+          <p>会先更新 Codex 配置，然后尝试关闭并重新打开 Codex 桌面应用。</p>
+          <p>请确认当前 Codex 里没有需要保留的未完成输入。</p>
+        </div>
+        <div className="confirm-dialog-actions">
+          <button className="secondary-button" type="button" onClick={onCancel}>
+            取消
+          </button>
+          <button className="primary-button" type="button" onClick={onConfirm}>
+            <Power aria-hidden="true" size={17} />
+            确认重启
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function SessionDetailsDialog({
+  row,
+  targetProvider,
+  onClose
+}: {
+  row: ThreadRow;
+  targetProvider: string;
+  onClose: () => void;
+}) {
+  const titleId = `session-details-${row.threadId}`;
+  return (
+    <div className="modal-backdrop">
+      <section aria-labelledby={titleId} aria-modal="true" className="details-dialog" role="dialog">
+        <div className="confirm-dialog-header">
+          <span className="confirm-dialog-icon details">
+            <FileText aria-hidden="true" size={20} />
+          </span>
+          <div>
+            <p className="eyebrow">高级信息</p>
+            <h3 id={titleId}>{row.displayName} 高级信息</h3>
+          </div>
+        </div>
+        <dl className="details-grid">
+          <div>
+            <dt>ID</dt>
+            <dd>{row.threadId}</dd>
+          </div>
+          <div>
+            <dt>Provider</dt>
+            <dd>
+              {row.fileProvider ?? "未知"} -&gt; {targetProvider}
+            </dd>
+          </div>
+          <div>
+            <dt>类型</dt>
+            <dd>{lifecycleLabel(row.lifecycle)}</dd>
+          </div>
+          <div>
+            <dt>问题</dt>
+            <dd>{row.issueCodes.length > 0 ? row.issueCodes.join(", ") : "无"}</dd>
+          </div>
+          <div>
+            <dt>文件</dt>
+            <dd>{row.path}</dd>
+          </div>
+        </dl>
+        <div className="confirm-dialog-actions">
+          <button className="primary-button" type="button" onClick={onClose}>
+            关闭
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ConfirmLifecycleDialog({
+  action,
+  row,
+  onCancel,
+  onConfirm
+}: {
+  action: "archive" | "activate";
+  row: ThreadRow;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const isArchive = action === "archive";
+  const title = isArchive ? "确认归档会话" : "确认激活会话";
+  const actionText = isArchive ? "归档" : "激活";
+  const scopeText = isArchive ? "活跃会话" : "已归档会话";
+  return (
+    <div className="modal-backdrop">
+      <section aria-labelledby="confirm-lifecycle-title" aria-modal="true" className="confirm-dialog" role="dialog">
+        <div className="confirm-dialog-header">
+          <span className="confirm-dialog-icon">
+            {isArchive ? (
+              <Archive aria-hidden="true" size={20} />
+            ) : (
+              <ArchiveRestore aria-hidden="true" size={20} />
+            )}
+          </span>
+          <div>
+            <p className="eyebrow">更新前确认</p>
+            <h3 id="confirm-lifecycle-title">{title}</h3>
+          </div>
+        </div>
+        <div className="confirm-dialog-body">
+          <p>
+            将{actionText} 1 个{scopeText}
+          </p>
+          <p>
+            会话：<strong>{row.displayName}</strong>
+          </p>
+          <p>会先创建备份，然后移动会话文件并更新本地状态库。</p>
+        </div>
+        <div className="confirm-dialog-actions">
+          <button className="secondary-button" type="button" onClick={onCancel}>
+            取消
+          </button>
+          <button className="primary-button" type="button" onClick={onConfirm}>
+            {isArchive ? (
+              <Archive aria-hidden="true" size={17} />
+            ) : (
+              <ArchiveRestore aria-hidden="true" size={17} />
+            )}
+            确认{actionText}
           </button>
         </div>
       </section>
@@ -990,6 +1338,9 @@ function localizedCommandErrorMessage(error: CommandError) {
     no_session_selected: "请至少选择一个要处理的会话。",
     selected_thread_missing: "选中的会话已经不存在，请重新扫描。",
     delete_requires_archived_sessions: "只能删除已归档会话；活跃会话不会被删除。",
+    archive_requires_active_sessions: "只能归档活跃会话。",
+    activate_requires_archived_sessions: "只能激活已归档会话。",
+    target_session_exists: "目标会话文件已存在，请重新扫描或检查会话目录。",
     invalid_utf8: "会话文件不是有效的 UTF-8，暂时无法安全迁移。",
     invalid_jsonl: "会话 JSONL 无法解析，暂时无法安全迁移。",
     missing_session_meta: "会话文件缺少 session_meta 开头，暂时无法安全迁移。",

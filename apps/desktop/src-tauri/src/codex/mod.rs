@@ -1,8 +1,10 @@
+pub mod archive;
 pub mod backup;
 pub mod deletion;
 pub mod error;
 pub mod metadata;
 pub mod migration;
+pub mod restart;
 pub mod scan;
 pub mod sqlite;
 
@@ -10,6 +12,7 @@ pub mod sqlite;
 pub mod test_support;
 
 pub use error::{CommandError, Result};
+pub use restart::{ProviderRestartRequest, ProviderRestartResult};
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -99,6 +102,20 @@ pub struct DeleteArchivedRequest {
     pub thread_ids: Vec<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArchiveRequest {
+    pub codex_home: String,
+    pub thread_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ArchiveResult {
+    pub changed_threads: Vec<String>,
+    pub backup_dir: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DeleteArchivedResult {
@@ -179,8 +196,24 @@ pub fn preview_delete_archived_sessions(
     deletion::preview_delete_archived_sessions(request)
 }
 
-pub fn apply_delete_archived_sessions(request: DeleteArchivedRequest) -> Result<DeleteArchivedResult> {
+pub fn apply_delete_archived_sessions(
+    request: DeleteArchivedRequest,
+) -> Result<DeleteArchivedResult> {
     deletion::apply_delete_archived_sessions(request)
+}
+
+pub fn apply_archive_sessions(request: ArchiveRequest) -> Result<ArchiveResult> {
+    archive::apply_archive_sessions(request)
+}
+
+pub fn apply_activate_sessions(request: ArchiveRequest) -> Result<ArchiveResult> {
+    archive::apply_activate_sessions(request)
+}
+
+pub fn switch_provider_and_restart(
+    request: ProviderRestartRequest,
+) -> Result<ProviderRestartResult> {
+    restart::switch_provider_and_restart(request)
 }
 
 #[cfg(test)]

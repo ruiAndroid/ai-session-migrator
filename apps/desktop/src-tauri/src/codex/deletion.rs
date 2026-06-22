@@ -15,7 +15,9 @@ pub fn preview_delete_archived_sessions(
     delete_archived_sessions(request, false)
 }
 
-pub fn apply_delete_archived_sessions(request: DeleteArchivedRequest) -> Result<DeleteArchivedResult> {
+pub fn apply_delete_archived_sessions(
+    request: DeleteArchivedRequest,
+) -> Result<DeleteArchivedResult> {
     delete_archived_sessions(request, true)
 }
 
@@ -51,10 +53,7 @@ fn delete_archived_sessions(
         if file.lifecycle != ThreadLifecycle::Archived {
             return Err(CommandError::new(
                 "delete_requires_archived_sessions",
-                format!(
-                    "Refusing to delete active session: {}",
-                    metadata.thread_id
-                ),
+                format!("Refusing to delete active session: {}", metadata.thread_id),
             ));
         }
         archived_items.push((metadata, file.path));

@@ -1,9 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  ArchiveRequest,
+  ArchiveResult,
   DeleteArchivedRequest,
   DeleteArchivedResult,
   MigrationRequest,
   MigrationResult,
+  ProviderRestartRequest,
+  ProviderRestartResult,
   ScanResponse
 } from "./session";
 
@@ -13,6 +17,9 @@ export type MigrationApi = {
   applyProviderMigration(request: MigrationRequest): Promise<MigrationResult>;
   previewDeleteArchivedSessions(request: DeleteArchivedRequest): Promise<DeleteArchivedResult>;
   applyDeleteArchivedSessions(request: DeleteArchivedRequest): Promise<DeleteArchivedResult>;
+  applyArchiveSessions(request: ArchiveRequest): Promise<ArchiveResult>;
+  applyActivateSessions(request: ArchiveRequest): Promise<ArchiveResult>;
+  switchProviderAndRestart(request: ProviderRestartRequest): Promise<ProviderRestartResult>;
 };
 
 export const tauriMigrationApi: MigrationApi = {
@@ -30,5 +37,14 @@ export const tauriMigrationApi: MigrationApi = {
   },
   applyDeleteArchivedSessions(request) {
     return invoke<DeleteArchivedResult>("apply_delete_archived_sessions", { request });
+  },
+  applyArchiveSessions(request) {
+    return invoke<ArchiveResult>("apply_archive_sessions", { request });
+  },
+  applyActivateSessions(request) {
+    return invoke<ArchiveResult>("apply_activate_sessions", { request });
+  },
+  switchProviderAndRestart(request) {
+    return invoke<ProviderRestartResult>("switch_provider_and_restart", { request });
   }
 };

@@ -34,7 +34,8 @@ pub fn scan_codex_home(codex_home: &Path) -> Result<ScanResponse> {
     }
 
     let config_provider = config_provider(codex_home)?;
-    let index_ids = index_ids(codex_home)?;
+    let index_entries = index_entries(codex_home)?;
+    let index_ids: BTreeSet<String> = index_entries.keys().cloned().collect();
     let dbs = state_dbs(codex_home);
     let mut rows = Vec::new();
     let mut source_providers = BTreeSet::new();
@@ -66,11 +67,15 @@ pub fn scan_codex_home(codex_home: &Path) -> Result<ScanResponse> {
         if !index_ids.contains(&metadata.thread_id) {
             issue_codes.push("missing_index".to_string());
         }
+        let mut state_title = None;
         for db in &dbs {
             let entry = state_entry(db, &metadata.thread_id);
             if !entry.exists {
                 issue_codes.push("missing_state_entry".to_string());
             } else {
+                if state_title.is_none() {
+                    state_title = entry.title.clone();
+                }
                 if let (Some(state_provider), Some(file_provider)) =
                     (&entry.provider, &metadata.provider)
                 {
@@ -87,6 +92,7 @@ pub fn scan_codex_home(codex_home: &Path) -> Result<ScanResponse> {
         issue_codes.dedup();
         rows.push(thread_row(
             &metadata,
+            display_title(&metadata, &index_entries, state_title.as_deref()),
             config_provider.clone(),
             file.lifecycle,
             issue_codes,
@@ -214,26 +220,56 @@ fn quoted_toml_string(value: &str) -> Option<String> {
 }
 
 pub fn index_ids(codex_home: &Path) -> Result<BTreeSet<String>> {
+    Ok(index_entries(codex_home)?.keys().cloned().collect())
+}
+
+fn index_entries(codex_home: &Path) -> Result<BTreeMap<String, String>> {
     let path = codex_home.join("session_index.jsonl");
     if !path.exists() {
-        return Ok(BTreeSet::new());
+        return Ok(BTreeMap::new());
     }
     let text = fs::read_to_string(&path)
         .map_err(|error| CommandError::io("read session index", path.display(), error))?;
-    let mut ids = BTreeSet::new();
+    let mut entries = BTreeMap::new();
     for line in text.lines().filter(|line| !line.trim().is_empty()) {
         let Ok(value) = serde_json::from_str::<Value>(line) else {
             continue;
         };
         if let Some(id) = value.get("id").and_then(Value::as_str) {
-            ids.insert(id.to_string());
+            let title = value
+                .get("thread_name")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or_default()
+                .to_string();
+            entries.insert(id.to_string(), title);
         }
     }
-    Ok(ids)
+    Ok(entries)
+}
+
+fn display_title(
+    metadata: &SessionMetadata,
+    index_entries: &BTreeMap<String, String>,
+    state_title: Option<&str>,
+) -> String {
+    index_entries
+        .get(&metadata.thread_id)
+        .filter(|title| !title.is_empty())
+        .cloned()
+        .or_else(|| {
+            state_title
+                .map(str::trim)
+                .filter(|title| !title.is_empty())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| metadata.title.clone())
 }
 
 fn thread_row(
     metadata: &SessionMetadata,
+    display_name: String,
     config_provider: Option<String>,
     lifecycle: ThreadLifecycle,
     issue_codes: Vec<String>,
@@ -247,7 +283,7 @@ fn thread_row(
     ThreadRow {
         thread_id: metadata.thread_id.clone(),
         short_id: metadata.thread_id.chars().take(8).collect(),
-        display_name: metadata.title.clone(),
+        display_name,
         path: metadata.path.display().to_string(),
         file_provider: metadata.provider.clone(),
         config_provider,
@@ -357,7 +393,9 @@ fn provider_options(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codex::test_support::{init_state_db, insert_state_row, write_jsonl};
+    use crate::codex::test_support::{
+        init_state_db, insert_state_row, insert_state_row_with_title, write_jsonl,
+    };
     use crate::codex::ThreadLifecycle;
 
     #[test]
@@ -469,12 +507,75 @@ mod tests {
         let response = scan_codex_home(&codex).unwrap();
 
         assert_eq!(response.dashboard.rows[0].thread_id, active_id);
-        assert_eq!(response.dashboard.rows[0].lifecycle, ThreadLifecycle::Active);
+        assert_eq!(
+            response.dashboard.rows[0].lifecycle,
+            ThreadLifecycle::Active
+        );
         assert_eq!(response.dashboard.rows[1].thread_id, archived_id);
-        assert_eq!(response.dashboard.rows[1].lifecycle, ThreadLifecycle::Archived);
+        assert_eq!(
+            response.dashboard.rows[1].lifecycle,
+            ThreadLifecycle::Archived
+        );
         assert!(response.dashboard.rows[1]
             .issue_codes
             .contains(&"archived_state".to_string()));
+    }
+
+    #[test]
+    fn scan_prefers_renamed_session_title_from_index() {
+        let temp = tempfile::tempdir().unwrap();
+        let codex = temp.path().join(".codex");
+        let thread_id = "019eee11-9343-7f30-971e-b01e55a058c8";
+        let state_db = codex.join("state_5.sqlite");
+        write_jsonl(
+            &codex.join("sessions/2026/06/22/rollout-a-019eee11-9343-7f30-971e-b01e55a058c8.jsonl"),
+            thread_id,
+            "funai",
+            false,
+            "old generated title",
+        );
+        fs::write(codex.join("config.toml"), "model_provider = \"funai\"\n").unwrap();
+        fs::write(
+            codex.join("session_index.jsonl"),
+            format!("{{\"id\":\"{thread_id}\",\"thread_name\":\"renamed title\"}}\n"),
+        )
+        .unwrap();
+        init_state_db(&state_db);
+        insert_state_row(&state_db, thread_id, "funai", 0);
+
+        let response = scan_codex_home(&codex).unwrap();
+
+        assert_eq!(response.dashboard.rows[0].display_name, "renamed title");
+    }
+
+    #[test]
+    fn scan_uses_sqlite_title_when_index_has_no_thread_name() {
+        let temp = tempfile::tempdir().unwrap();
+        let codex = temp.path().join(".codex");
+        let thread_id = "019eee31-9343-7f30-971e-b01e55a058c8";
+        let state_db = codex.join("state_5.sqlite");
+        write_jsonl(
+            &codex.join("sessions/2026/06/22/rollout-a-019eee31-9343-7f30-971e-b01e55a058c8.jsonl"),
+            thread_id,
+            "funai",
+            false,
+            "old generated title",
+        );
+        fs::write(codex.join("config.toml"), "model_provider = \"funai\"\n").unwrap();
+        fs::write(
+            codex.join("session_index.jsonl"),
+            format!("{{\"id\":\"{thread_id}\"}}\n"),
+        )
+        .unwrap();
+        init_state_db(&state_db);
+        insert_state_row_with_title(&state_db, thread_id, "funai", 0, "sqlite renamed title");
+
+        let response = scan_codex_home(&codex).unwrap();
+
+        assert_eq!(
+            response.dashboard.rows[0].display_name,
+            "sqlite renamed title"
+        );
     }
 
     #[test]

@@ -62,6 +62,21 @@ export type DeleteArchivedRequest = {
   threadIds: string[];
 };
 
+export type ArchiveRequest = {
+  codexHome: string;
+  threadIds: string[];
+};
+
+export type ProviderRestartRequest = {
+  codexHome: string;
+  targetProvider: string;
+};
+
+export type ArchiveResult = {
+  changedThreads: string[];
+  backupDir: string | null;
+};
+
 export type DeleteArchivedResult = {
   deletedThreads: string[];
   backupDir: string | null;
@@ -73,6 +88,15 @@ export type MigrationResult = {
   plannedRepairs: PlannedRepair[];
   backupDir: string | null;
   dryRun: boolean;
+};
+
+export type ProviderRestartResult = {
+  configuredProvider: string;
+  previousProvider: string | null;
+  configBackupDir: string | null;
+  restartAttempted: boolean;
+  restarted: boolean;
+  restartMessage: string;
 };
 
 export type CommandError = {

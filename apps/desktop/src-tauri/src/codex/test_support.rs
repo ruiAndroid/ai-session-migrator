@@ -63,6 +63,16 @@ pub fn init_state_db(path: &Path) {
 }
 
 pub fn insert_state_row(path: &Path, thread_id: &str, provider: &str, archived: i32) {
+    insert_state_row_with_title(path, thread_id, provider, archived, "old title");
+}
+
+pub fn insert_state_row_with_title(
+    path: &Path,
+    thread_id: &str,
+    provider: &str,
+    archived: i32,
+    title: &str,
+) {
     let connection = Connection::open(path).unwrap();
     connection
         .execute(
@@ -70,8 +80,8 @@ pub fn insert_state_row(path: &Path, thread_id: &str, provider: &str, archived: 
                 id, rollout_path, created_at, updated_at, source, model_provider, cwd, title,
                 sandbox_policy, approval_mode, tokens_used, has_user_event, archived, archived_at,
                 cli_version, first_user_message, memory_mode, created_at_ms, updated_at_ms, preview
-             ) values (?1, '', 0, 0, 'vscode', ?2, '', 'old title', '{}', 'never', 0, 1, ?3, NULL, '', '', 'enabled', 0, 0, '')",
-            (thread_id, provider, archived),
+             ) values (?1, '', 0, 0, 'vscode', ?2, '', ?3, '{}', 'never', 0, 1, ?4, NULL, '', '', 'enabled', 0, 0, '')",
+            (thread_id, provider, title, archived),
         )
         .unwrap();
 }

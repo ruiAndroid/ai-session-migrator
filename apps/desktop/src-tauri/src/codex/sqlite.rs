@@ -9,6 +9,7 @@ pub struct StateEntry {
     pub exists: bool,
     pub provider: Option<String>,
     pub archived: Option<i32>,
+    pub title: Option<String>,
 }
 
 pub fn state_dbs(codex_home: &Path) -> Vec<PathBuf> {
@@ -31,27 +32,36 @@ pub fn state_entry(db: &Path, thread_id: &str) -> StateEntry {
             exists: false,
             provider: None,
             archived: None,
+            title: None,
         };
     };
     let row = connection
         .query_row(
-            "select model_provider, archived from threads where id=?1",
+            "select model_provider, archived, title from threads where id=?1",
             [thread_id],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)?)),
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i32>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
         )
         .optional();
     match row {
-        Ok(Some((provider, archived))) => StateEntry {
+        Ok(Some((provider, archived, title))) => StateEntry {
             db_path,
             exists: true,
             provider: Some(provider),
             archived: Some(archived),
+            title: (!title.trim().is_empty()).then_some(title),
         },
         _ => StateEntry {
             db_path,
             exists: false,
             provider: None,
             archived: None,
+            title: None,
         },
     }
 }
@@ -156,6 +166,43 @@ pub fn delete_state_entries(codex_home: &Path, thread_ids: &[String]) -> Result<
             connection
                 .execute("delete from threads where id=?1", [thread_id])
                 .map_err(|error| CommandError::new("sqlite_delete_failed", error.to_string()))?;
+        }
+    }
+    Ok(())
+}
+
+pub fn update_archive_state(
+    codex_home: &Path,
+    updates: &[(String, PathBuf)],
+    lifecycle: &ThreadLifecycle,
+) -> Result<()> {
+    let archived = archived_value(lifecycle);
+    let archived_at = match lifecycle {
+        ThreadLifecycle::Active => None,
+        ThreadLifecycle::Archived => Some(chrono::Utc::now().timestamp()),
+    };
+    for db in state_dbs(codex_home) {
+        let connection = Connection::open(&db)
+            .map_err(|error| CommandError::new("sqlite_open_failed", error.to_string()))?;
+        connection
+            .busy_timeout(std::time::Duration::from_millis(5_000))
+            .map_err(|error| CommandError::new("sqlite_busy_timeout_failed", error.to_string()))?;
+        for (thread_id, rollout_path) in updates {
+            connection
+                .execute(
+                    "
+                    update threads
+                    set archived=?1, archived_at=?2, rollout_path=?3
+                    where id=?4
+                    ",
+                    params![
+                        archived,
+                        archived_at,
+                        rollout_path.display().to_string(),
+                        thread_id
+                    ],
+                )
+                .map_err(|error| CommandError::new("sqlite_update_failed", error.to_string()))?;
         }
     }
     Ok(())

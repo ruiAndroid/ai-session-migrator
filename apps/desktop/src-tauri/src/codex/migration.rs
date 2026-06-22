@@ -302,7 +302,13 @@ mod tests {
         let unselected_rollout =
             codex.join("sessions/2026/06/15/rollout-b-019ec94d-720d-7a12-a379-28c8042bc6b4.jsonl");
         write_jsonl(&selected_rollout, selected, "funai", false, "选中的会话");
-        write_jsonl(&unselected_rollout, unselected, "funai", false, "未选中的会话");
+        write_jsonl(
+            &unselected_rollout,
+            unselected,
+            "funai",
+            false,
+            "未选中的会话",
+        );
         let unselected_before = fs::read(&unselected_rollout).unwrap();
 
         let result = apply_provider_migration(MigrationRequest {
@@ -387,7 +393,13 @@ mod tests {
         let thread_id = "019eca3b-941d-7340-9b14-328c635a6523";
         let rollout =
             codex.join("archived_sessions/rollout-a-019eca3b-941d-7340-9b14-328c635a6523.jsonl");
-        write_jsonl(&rollout, thread_id, "funai", false, "archived provider migration");
+        write_jsonl(
+            &rollout,
+            thread_id,
+            "funai",
+            false,
+            "archived provider migration",
+        );
         let db = codex.join("state_5.sqlite");
         init_state_db(&db);
         insert_state_row(&db, thread_id, "funai", 1);
