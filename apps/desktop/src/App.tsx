@@ -228,6 +228,7 @@ export default function App({
           restartTargetProvider: request.targetProvider,
           restartResult: null
         });
+        setConfirmingRestart(true);
       }
     } catch (caught) {
       setError(errorMessage(caught));

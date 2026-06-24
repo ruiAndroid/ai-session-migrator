@@ -389,10 +389,7 @@ test("successful migration can switch Codex provider and restart after confirmat
   await user.click(screen.getByRole("button", { name: /确认迁移/ }));
   await user.click(within(screen.getByRole("dialog", { name: "确认迁移" })).getByRole("button", { name: "确认迁移" }));
 
-  const completion = await screen.findByRole("status");
-  await user.click(within(completion).getByRole("button", { name: "切换并重启 Codex" }));
-
-  const dialog = screen.getByRole("dialog", { name: "切换并重启 Codex" });
+  const dialog = await screen.findByRole("dialog", { name: "切换并重启 Codex" });
   expect(dialog).toHaveTextContent("目标 provider");
   expect(dialog).toHaveTextContent("yihubangg");
   expect(api.switchProviderAndRestart).not.toHaveBeenCalled();
