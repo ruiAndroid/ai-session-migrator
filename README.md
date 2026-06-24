@@ -8,7 +8,7 @@
 
 它可以扫描本机 Codex Desktop 会话，选择来源 provider 和目标 provider，预览变更，自动创建备份，并把选中的会话迁移到新的 provider。整个过程都在本机完成，不上传你的会话数据。
 
-> Windows 桌面应用。基于 Tauri、React、TypeScript 和 Rust 构建。
+> Windows 和 macOS 桌面应用。基于 Tauri、React、TypeScript 和 Rust 构建。
 
 ## 为什么做这个工具
 
@@ -40,12 +40,15 @@ AI Session Migrator 提供一个更安全、更直观的桌面流程：
 推荐通过 GitHub Releases 下载：
 
 1. 打开仓库的 **Releases** 页面。
-2. 下载 `AI-Session-Migrator-Windows-x64.exe`。
-3. 运行应用，点击 **扫描会话**。
+2. Windows 用户下载 `AI-Session-Migrator-Windows-x64.exe`。
+3. macOS 用户下载 `AI-Session-Migrator-macOS-universal-unsigned.dmg`。
+4. 运行应用，点击 **扫描会话**。
+
+macOS 当前提供的是未签名预览版 DMG。首次打开时，如果系统提示“无法验证开发者”，可以在 Finder 中右键应用并选择 **打开**，或在 **系统设置 > 隐私与安全性** 中允许打开。
+
+Windows 早期版本还没有代码签名，可能会显示 SmartScreen 提醒。这是未签名小众工具在初期常见的提示。
 
 应用默认读取当前用户的 `.codex` 目录。你也可以手动指定其他 Codex 数据目录。
-
-> 早期版本还没有代码签名，Windows 可能会显示 SmartScreen 提醒。这是未签名小众工具在初期常见的提示。
 
 ## 安全模型
 
@@ -91,25 +94,27 @@ npm run dev
 npm run web:dev
 ```
 
-构建桌面 exe：
+构建当前系统的桌面可执行文件：
 
 ```powershell
 npm run build
 ```
 
-构建产物位置：
+Windows exe 构建产物位置：
 
 ```text
 apps/desktop/src-tauri/target/release/ai-session-migrator.exe
 ```
 
-构建安装包：
+构建当前系统的安装包：
 
 ```powershell
 npm --workspace apps/desktop run desktop:bundle
 ```
 
 安装包构建可能会在 Windows 上下载 WiX 等外部打包工具。如果下载被阻断，exe 构建仍然可用，也是当前主要的本地验证目标。
+
+macOS DMG 需要在 macOS 上构建，或通过 GitHub Actions 的 macOS runner 自动构建。
 
 ## 验证
 
@@ -136,19 +141,23 @@ npm run desktop:build
 
 ## 发布自动化
 
-仓库包含 GitHub Actions workflow。推送版本 tag 后会自动构建 Windows exe：
+仓库包含 GitHub Actions workflow。推送版本 tag 后会自动构建 Windows exe 和 macOS 未签名 DMG：
 
 ```powershell
 git tag v0.1.0
 git push origin v0.1.0
 ```
 
-workflow 会把 `AI-Session-Migrator-Windows-x64.exe` 上传到 GitHub Release。
+workflow 会把以下产物上传到 GitHub Release：
+
+- `AI-Session-Migrator-Windows-x64.exe`
+- `AI-Session-Migrator-macOS-universal-unsigned.dmg`
 
 ## 路线图
 
 - 增加英文界面切换。
 - 增加签名版 Windows 安装包。
+- 增加签名并公证的 macOS DMG。
 - 增加更强的会话搜索和筛选。
 - 增加从备份恢复的可视化流程。
 - 随 Codex 存储格式变化扩展 provider 迁移检查。

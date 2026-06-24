@@ -8,7 +8,7 @@
 
 It helps you scan local Codex Desktop sessions, choose a source provider, preview the change, create backups, and migrate selected sessions to your target provider without uploading your conversation data anywhere.
 
-> Windows desktop app. Built with Tauri, React, TypeScript, and Rust.
+> Windows and macOS desktop app. Built with Tauri, React, TypeScript, and Rust.
 
 ## Why This Exists
 
@@ -40,12 +40,15 @@ AI Session Migrator gives you a safer desktop workflow:
 The easiest way to distribute builds is through GitHub Releases.
 
 1. Open the repository's **Releases** page.
-2. Download `AI-Session-Migrator-Windows-x64.exe`.
-3. Run the app and click **扫描会话**.
+2. On Windows, download `AI-Session-Migrator-Windows-x64.exe`.
+3. On macOS, download `AI-Session-Migrator-macOS-universal-unsigned.dmg`.
+4. Run the app and click **扫描会话**.
+
+The current macOS build is an unsigned preview DMG. If macOS says the developer cannot be verified, right-click the app in Finder and choose **Open**, or allow it from **System Settings > Privacy & Security**.
+
+Windows may show a SmartScreen warning for early unsigned builds. This is expected until the project has a signed installer or broader reputation.
 
 The app reads the current user's `.codex` directory by default. You can also point it to another Codex data directory manually.
-
-> Windows may show a SmartScreen warning for early unsigned builds. This is expected until the project has a signed installer or broader reputation.
 
 ## Safety Model
 
@@ -91,25 +94,27 @@ For frontend-only debugging:
 npm run web:dev
 ```
 
-Build the desktop executable:
+Build the desktop executable for the current system:
 
 ```powershell
 npm run build
 ```
 
-The executable is written to:
+The Windows executable is written to:
 
 ```text
 apps/desktop/src-tauri/target/release/ai-session-migrator.exe
 ```
 
-Build installer bundles:
+Build installer bundles for the current system:
 
 ```powershell
 npm --workspace apps/desktop run desktop:bundle
 ```
 
 Installer bundling may download external packaging tools such as WiX on Windows. If those downloads are blocked, the executable build above still works and remains the primary local verification target.
+
+macOS DMG builds must run on macOS, either locally on a Mac or through the GitHub Actions macOS runner.
 
 ## Verification
 
@@ -136,19 +141,23 @@ On Windows, the desktop scripts automatically load the Visual Studio C++ environ
 
 ## Release Automation
 
-This repository includes a GitHub Actions workflow that builds a Windows executable when a version tag is pushed:
+This repository includes GitHub Actions workflows that build a Windows executable and an unsigned macOS DMG when a version tag is pushed:
 
 ```powershell
 git tag v0.1.0
 git push origin v0.1.0
 ```
 
-The workflow uploads `AI-Session-Migrator-Windows-x64.exe` to the GitHub Release.
+The workflows upload these artifacts to the GitHub Release:
+
+- `AI-Session-Migrator-Windows-x64.exe`
+- `AI-Session-Migrator-macOS-universal-unsigned.dmg`
 
 ## Roadmap
 
 - Add English UI mode.
 - Add signed Windows installer.
+- Add signed and notarized macOS DMG.
 - Add richer session search and filters.
 - Add safer restore-from-backup workflow.
 - Expand provider migration checks as Codex storage formats evolve.

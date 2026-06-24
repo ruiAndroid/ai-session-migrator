@@ -4,7 +4,7 @@
 
 ## 它能做什么
 
-AI Session Migrator 是一个本地优先的 Windows 桌面应用，用来把 Codex 会话从一个 AI provider 迁移到另一个 provider。
+AI Session Migrator 是一个本地优先的 Windows 和 macOS 桌面应用，用来把 Codex 会话从一个 AI provider 迁移到另一个 provider。
 
 当你切换 provider 后，如果旧会话仍然绑定在之前的 provider 上，可以用它扫描本地会话、选择来源和目标 provider、预览迁移结果，并在写入前自动创建备份。
 
@@ -27,11 +27,12 @@ AI Session Migrator 是一个本地优先的 Windows 桌面应用，用来把 Co
 
 ```text
 AI-Session-Migrator-Windows-x64.exe
+AI-Session-Migrator-macOS-universal-unsigned.dmg
 ```
 
 ## 注意事项
 
-- 本版本仅面向 Windows。
+- macOS DMG 当前为未签名预览版。如果首次打开被系统阻止，可以在 Finder 中右键应用并选择 **打开**，或在 **系统设置 > 隐私与安全性** 中允许打开。
 - 当前界面为中文。
 - 应用只在本机处理数据，不上传会话文件。
 - 早期未签名版本可能触发 Windows SmartScreen 提醒。

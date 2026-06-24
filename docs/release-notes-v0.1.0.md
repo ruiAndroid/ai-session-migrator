@@ -4,7 +4,7 @@ First public desktop build.
 
 ## What It Does
 
-AI Session Migrator is a local-first Windows desktop app for migrating Codex sessions between AI providers.
+AI Session Migrator is a local-first Windows and macOS desktop app for migrating Codex sessions between AI providers.
 
 Use it when you have old Codex sessions tied to a previous provider and want to move selected sessions to your current provider with preview, confirmation, and automatic backups.
 
@@ -27,11 +27,12 @@ Download:
 
 ```text
 AI-Session-Migrator-Windows-x64.exe
+AI-Session-Migrator-macOS-universal-unsigned.dmg
 ```
 
 ## Notes
 
-- Windows only for this release.
+- The macOS DMG is currently unsigned. If macOS blocks the first launch, right-click the app and choose **Open**, or allow it from **System Settings > Privacy & Security**.
 - The UI is currently Chinese.
 - The app processes data locally and does not upload session files.
 - Early unsigned builds may trigger Windows SmartScreen warnings.

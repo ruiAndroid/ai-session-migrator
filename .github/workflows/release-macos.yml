@@ -1,0 +1,68 @@
+name: Release macOS DMG
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    name: Build macOS universal DMG
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run frontend tests
+        run: npm test
+
+      - name: Run Rust tests
+        working-directory: apps/desktop/src-tauri
+        run: cargo test --lib
+
+      - name: Build macOS app bundle
+        run: npm --workspace apps/desktop run desktop:bundle -- --target universal-apple-darwin
+
+      - name: Collect DMG artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          dmg_path="$(find apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/dmg -name '*.dmg' -print -quit)"
+          if [[ -z "${dmg_path}" ]]; then
+            echo "No macOS DMG was produced." >&2
+            exit 1
+          fi
+          cp "${dmg_path}" artifacts/AI-Session-Migrator-macOS-universal-unsigned.dmg
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI-Session-Migrator-macOS-universal-unsigned
+          path: artifacts/AI-Session-Migrator-macOS-universal-unsigned.dmg
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/AI-Session-Migrator-macOS-universal-unsigned.dmg
+          body_path: docs/release-notes-v0.1.0.md
