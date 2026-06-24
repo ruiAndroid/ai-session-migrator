@@ -229,6 +229,6 @@ mod tests {
             _ => None,
         });
 
-        assert_eq!(path, PathBuf::from(r"C:\Users\jianrui\.codex"));
+        assert_eq!(path, PathBuf::from(r"C:\Users\jianrui").join(".codex"));
     }
 }
