@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import App from "./App";
 import type { MigrationApi } from "./domain/migrationApi";
-import type { ScanResponse } from "./domain/session";
+import type { MigrationResult, ScanResponse, SessionTranscript } from "./domain/session";
 
 const fixtureCodexHome = "D:\\Codex\\fixture\\.codex";
 const activeThreadId = "019eca3b-941d-7340-9b14-328c635a6523";
@@ -127,6 +127,26 @@ const scanResponseAfterActivate: ScanResponse = {
   }
 };
 
+const activeTranscript: SessionTranscript = {
+  threadId: activeThreadId,
+  title: "活跃 provider 会话",
+  path: `${fixtureCodexHome}\\sessions\\rollout-a.jsonl`,
+  turns: [
+    {
+      role: "user",
+      text: "帮我把这个会话切到 yihubangg",
+      timestamp: "2026-06-15T01:01:00.000Z",
+      index: 0
+    },
+    {
+      role: "assistant",
+      text: "可以，我会先检查会话 provider。",
+      timestamp: "2026-06-15T01:02:00.000Z",
+      index: 1
+    }
+  ]
+};
+
 function fakeApi(): MigrationApi {
   return {
     scanCodexHome: vi.fn().mockResolvedValue(scanResponse),
@@ -173,8 +193,19 @@ function fakeApi(): MigrationApi {
       restartAttempted: true,
       restarted: true,
       restartMessage: "Codex 已按新 provider 配置重新启动。"
-    })
+    }),
+    readSessionTranscript: vi.fn().mockResolvedValue(activeTranscript)
   };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
 }
 
 async function renderWorkflow(api = fakeApi()) {
@@ -196,6 +227,32 @@ async function renderWorkflowWithDesktopActions(api = fakeApi(), desktopActions 
   await screen.findByDisplayValue(fixtureCodexHome);
   return { api, desktopActions, user };
 }
+
+async function expectBlockingLoadingDialog(name: string, text: string) {
+  const dialog = await screen.findByRole("dialog", { name });
+  expect(dialog).toHaveTextContent(text);
+  expect(within(dialog).queryByRole("button")).not.toBeInTheDocument();
+  return dialog;
+}
+
+test("scan shows a blocking loading dialog while reading sessions", async () => {
+  const api = fakeApi();
+  const pendingScan = deferred<ScanResponse>();
+  vi.mocked(api.scanCodexHome).mockReturnValueOnce(pendingScan.promise);
+  const { user } = await renderWorkflow(api);
+
+  await user.click(screen.getByRole("button", { name: /扫描会话/ }));
+
+  await expectBlockingLoadingDialog("正在扫描", "正在读取 Codex 会话目录");
+  expect(screen.getByRole("button", { name: /正在扫描/ })).toBeDisabled();
+
+  pendingScan.resolve(scanResponse);
+
+  await waitFor(() => {
+    expect(screen.queryByRole("dialog", { name: "正在扫描" })).not.toBeInTheDocument();
+  });
+  expect(await screen.findByText("活跃 provider 会话")).toBeInTheDocument();
+});
 
 test("scan shows active sessions before archived sessions with lifecycle badges", async () => {
   const { user } = await renderWorkflow();
@@ -249,6 +306,31 @@ test("advanced session details open in a dialog", async () => {
   expect(screen.queryByRole("dialog", { name: "活跃 provider 会话 高级信息" })).not.toBeInTheDocument();
 });
 
+test("session transcript opens in a read-only dialog", async () => {
+  const api = fakeApi();
+  const { user } = await renderWorkflow(api);
+
+  await user.click(screen.getByRole("button", { name: /扫描会话/ }));
+  const activeRow = await screen.findByRole("article", { name: "活跃 provider 会话" });
+  await user.click(within(activeRow).getByRole("button", { name: "查看记录" }));
+
+  await waitFor(() => {
+    expect(api.readSessionTranscript).toHaveBeenCalledWith({
+      codexHome: fixtureCodexHome,
+      threadId: activeThreadId
+    });
+  });
+
+  const dialog = await screen.findByRole("dialog", { name: "活跃 provider 会话 会话记录" });
+  expect(dialog).toHaveTextContent("帮我把这个会话切到 yihubangg");
+  expect(dialog).toHaveTextContent("可以，我会先检查会话 provider。");
+  expect(dialog).toHaveTextContent("用户");
+  expect(dialog).toHaveTextContent("助手");
+
+  await user.click(within(dialog).getByRole("button", { name: "关闭" }));
+  expect(screen.queryByRole("dialog", { name: "活跃 provider 会话 会话记录" })).not.toBeInTheDocument();
+});
+
 test("preview sends selected visible rows and target provider to the API", async () => {
   const api = fakeApi();
   const { user } = await renderWorkflow(api);
@@ -293,6 +375,41 @@ test("confirm migration opens a dialog before applying", async () => {
       threadIds: [activeThreadId]
     });
   });
+});
+
+test("apply migration shows a blocking loading dialog while writing files", async () => {
+  const api = fakeApi();
+  const pendingMigration = deferred<MigrationResult>();
+  vi.mocked(api.scanCodexHome)
+    .mockResolvedValueOnce(scanResponse)
+    .mockResolvedValueOnce(scanResponseAfterMigration);
+  vi.mocked(api.applyProviderMigration).mockReturnValueOnce(pendingMigration.promise);
+  const { user } = await renderWorkflow(api);
+
+  await user.click(screen.getByRole("button", { name: /扫描会话/ }));
+  await screen.findByText("活跃 provider 会话");
+  await user.selectOptions(screen.getByLabelText("来源 provider"), "funai");
+  await user.click(screen.getByRole("button", { name: /预览迁移/ }));
+  await screen.findByText("将更新 1 个会话");
+  await user.click(screen.getByRole("button", { name: /确认迁移/ }));
+  await user.click(within(screen.getByRole("dialog", { name: "确认迁移" })).getByRole("button", { name: "确认迁移" }));
+
+  const loadingDialog = await screen.findByRole("dialog", { name: "正在迁移" });
+  expect(loadingDialog).toHaveTextContent("正在创建备份并写入会话");
+  expect(within(loadingDialog).queryByRole("button")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /正在迁移/ })).toBeDisabled();
+
+  pendingMigration.resolve({
+    changedThreads: [activeThreadId],
+    plannedRepairs: [],
+    backupDir: `${fixtureCodexHome}\\ai-session-migrator-backup-20260617-120000`,
+    dryRun: false
+  });
+
+  await waitFor(() => {
+    expect(screen.queryByRole("dialog", { name: "正在迁移" })).not.toBeInTheDocument();
+  });
+  expect(await screen.findByRole("dialog", { name: "切换并重启 Codex" })).toBeInTheDocument();
 });
 
 test("apply migration refreshes the list and keeps completion feedback compact", async () => {
@@ -372,6 +489,32 @@ test("delete archived sessions requires confirmation and removes only archived r
   );
 });
 
+test("delete archived sessions shows a blocking loading dialog while writing files", async () => {
+  const api = fakeApi();
+  const pendingDelete = deferred<Awaited<ReturnType<MigrationApi["applyDeleteArchivedSessions"]>>>();
+  vi.mocked(api.applyDeleteArchivedSessions).mockReturnValueOnce(pendingDelete.promise);
+  const { user } = await renderWorkflow(api);
+
+  await user.click(screen.getByRole("button", { name: /扫描会话/ }));
+  await screen.findByText("活跃 provider 会话");
+  await user.selectOptions(screen.getByLabelText("来源 provider"), "__all__");
+  await user.click(screen.getByTestId("delete-archived-button"));
+  await user.click(within(screen.getByRole("dialog", { name: /delete archived sessions/i })).getByTestId("confirm-delete-archived"));
+
+  await expectBlockingLoadingDialog("正在删除", "正在创建备份并删除已归档会话");
+
+  pendingDelete.resolve({
+    deletedThreads: [archivedThreadId],
+    backupDir: `${fixtureCodexHome}\\ai-session-migrator-backup-20260617-130000`,
+    dryRun: false
+  });
+
+  await waitFor(() => {
+    expect(screen.queryByRole("dialog", { name: "正在删除" })).not.toBeInTheDocument();
+  });
+  expect(screen.getByRole("status")).toHaveTextContent("已删除 1 个归档会话");
+});
+
 test("successful migration can switch Codex provider and restart after confirmation", async () => {
   const api = fakeApi();
   vi.mocked(api.scanCodexHome)
@@ -435,6 +578,31 @@ test("active session item can be archived after confirmation", async () => {
   expect(screen.getByRole("status")).toHaveTextContent("已归档 1 个会话");
 });
 
+test("active session item shows a blocking loading dialog while archiving", async () => {
+  const api = fakeApi();
+  const pendingArchive = deferred<Awaited<ReturnType<MigrationApi["applyArchiveSessions"]>>>();
+  vi.mocked(api.scanCodexHome).mockResolvedValueOnce(scanResponse).mockResolvedValueOnce(scanResponseAfterArchive);
+  vi.mocked(api.applyArchiveSessions).mockReturnValueOnce(pendingArchive.promise);
+  const { user } = await renderWorkflow(api);
+
+  await user.click(screen.getByRole("button", { name: /扫描会话/ }));
+  const activeRow = await screen.findByRole("article", { name: "活跃 provider 会话" });
+  await user.click(within(activeRow).getByRole("button", { name: "归档" }));
+  await user.click(within(screen.getByRole("dialog", { name: "确认归档会话" })).getByRole("button", { name: "确认归档" }));
+
+  await expectBlockingLoadingDialog("正在归档", "正在创建备份并移动会话文件");
+
+  pendingArchive.resolve({
+    changedThreads: [activeThreadId],
+    backupDir: `${fixtureCodexHome}\\ai-session-migrator-backup-20260617-150000`
+  });
+
+  await waitFor(() => {
+    expect(screen.queryByRole("dialog", { name: "正在归档" })).not.toBeInTheDocument();
+  });
+  expect(await screen.findByRole("status")).toHaveTextContent("已归档 1 个会话");
+});
+
 test("archived session item can be activated after confirmation", async () => {
   const api = fakeApi();
   vi.mocked(api.scanCodexHome).mockResolvedValueOnce(scanResponse).mockResolvedValueOnce(scanResponseAfterActivate);
@@ -464,6 +632,32 @@ test("archived session item can be activated after confirmation", async () => {
   expect(within(activatedRow).getByText("活跃")).toBeInTheDocument();
   expect(within(activatedRow).getByRole("button", { name: "归档" })).toBeInTheDocument();
   expect(screen.getByRole("status")).toHaveTextContent("已激活 1 个会话");
+});
+
+test("archived session item shows a blocking loading dialog while activating", async () => {
+  const api = fakeApi();
+  const pendingActivate = deferred<Awaited<ReturnType<MigrationApi["applyActivateSessions"]>>>();
+  vi.mocked(api.scanCodexHome).mockResolvedValueOnce(scanResponse).mockResolvedValueOnce(scanResponseAfterActivate);
+  vi.mocked(api.applyActivateSessions).mockReturnValueOnce(pendingActivate.promise);
+  const { user } = await renderWorkflow(api);
+
+  await user.click(screen.getByRole("button", { name: /扫描会话/ }));
+  await user.selectOptions(screen.getByLabelText("来源 provider"), "__all__");
+  const archivedRow = await screen.findByRole("article", { name: "归档 provider 会话" });
+  await user.click(within(archivedRow).getByRole("button", { name: "激活" }));
+  await user.click(within(screen.getByRole("dialog", { name: "确认激活会话" })).getByRole("button", { name: "确认激活" }));
+
+  await expectBlockingLoadingDialog("正在激活", "正在创建备份并恢复会话文件");
+
+  pendingActivate.resolve({
+    changedThreads: [archivedThreadId],
+    backupDir: `${fixtureCodexHome}\\ai-session-migrator-backup-20260617-160000`
+  });
+
+  await waitFor(() => {
+    expect(screen.queryByRole("dialog", { name: "正在激活" })).not.toBeInTheDocument();
+  });
+  expect(await screen.findByRole("status")).toHaveTextContent("已激活 1 个会话");
 });
 
 test("archived session item can be deleted without selecting every archived row", async () => {

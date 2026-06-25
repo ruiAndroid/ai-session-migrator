@@ -8,7 +8,9 @@ import type {
   MigrationResult,
   ProviderRestartRequest,
   ProviderRestartResult,
-  ScanResponse
+  ScanResponse,
+  SessionTranscript,
+  SessionTranscriptRequest
 } from "./session";
 
 export type MigrationApi = {
@@ -20,6 +22,7 @@ export type MigrationApi = {
   applyArchiveSessions(request: ArchiveRequest): Promise<ArchiveResult>;
   applyActivateSessions(request: ArchiveRequest): Promise<ArchiveResult>;
   switchProviderAndRestart(request: ProviderRestartRequest): Promise<ProviderRestartResult>;
+  readSessionTranscript(request: SessionTranscriptRequest): Promise<SessionTranscript>;
 };
 
 export const tauriMigrationApi: MigrationApi = {
@@ -46,5 +49,8 @@ export const tauriMigrationApi: MigrationApi = {
   },
   switchProviderAndRestart(request) {
     return invoke<ProviderRestartResult>("switch_provider_and_restart", { request });
+  },
+  readSessionTranscript(request) {
+    return invoke<SessionTranscript>("read_session_transcript", { request });
   }
 };

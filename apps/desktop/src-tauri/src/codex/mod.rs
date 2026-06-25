@@ -7,6 +7,7 @@ pub mod migration;
 pub mod restart;
 pub mod scan;
 pub mod sqlite;
+pub mod transcript;
 
 #[cfg(test)]
 pub mod test_support;
@@ -107,6 +108,31 @@ pub struct DeleteArchivedRequest {
 pub struct ArchiveRequest {
     pub codex_home: String,
     pub thread_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionTranscriptRequest {
+    pub codex_home: String,
+    pub thread_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptTurn {
+    pub role: String,
+    pub text: String,
+    pub timestamp: Option<String>,
+    pub index: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionTranscript {
+    pub thread_id: String,
+    pub title: String,
+    pub path: String,
+    pub turns: Vec<TranscriptTurn>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -210,6 +236,10 @@ pub fn apply_activate_sessions(request: ArchiveRequest) -> Result<ArchiveResult>
     archive::apply_activate_sessions(request)
 }
 
+pub fn read_session_transcript(request: SessionTranscriptRequest) -> Result<SessionTranscript> {
+    transcript::read_session_transcript(request)
+}
+
 pub fn switch_provider_and_restart(
     request: ProviderRestartRequest,
 ) -> Result<ProviderRestartResult> {
@@ -230,5 +260,43 @@ mod tests {
         });
 
         assert_eq!(path, PathBuf::from(r"C:\Users\jianrui").join(".codex"));
+    }
+
+    #[test]
+    fn read_session_transcript_returns_user_and_assistant_turns() {
+        let temp = tempfile::tempdir().unwrap();
+        let codex = temp.path().join(".codex");
+        let thread_id = "019eee11-9343-7f30-971e-b01e55a058c8";
+        let path =
+            codex.join("sessions/2026/06/22/rollout-a-019eee11-9343-7f30-971e-b01e55a058c8.jsonl");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            format!(
+                "{{\"timestamp\":\"2026-06-22T01:00:00.000Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"{thread_id}\",\"timestamp\":\"2026-06-22T01:00:00.000Z\",\"cwd\":\"D:\\\\work\",\"source\":\"vscode\",\"model_provider\":\"funai\",\"cli_version\":\"0.140.0\"}}}}\n\
+                 {{\"timestamp\":\"2026-06-22T01:01:00.000Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"message\",\"role\":\"user\",\"content\":[{{\"type\":\"input_text\",\"text\":\"你好 Codex\"}}]}}}}\n\
+                 {{\"timestamp\":\"2026-06-22T01:02:00.000Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{{\"type\":\"output_text\",\"text\":\"你好，我在\"}}]}}}}\n"
+            ),
+        )
+        .unwrap();
+
+        let transcript = read_session_transcript(SessionTranscriptRequest {
+            codex_home: codex.display().to_string(),
+            thread_id: thread_id.to_string(),
+        })
+        .unwrap();
+
+        assert_eq!(transcript.thread_id, thread_id);
+        assert_eq!(transcript.title, "你好 Codex");
+        assert_eq!(PathBuf::from(&transcript.path), path);
+        assert_eq!(transcript.turns.len(), 2);
+        assert_eq!(transcript.turns[0].role, "user");
+        assert_eq!(transcript.turns[0].text, "你好 Codex");
+        assert_eq!(
+            transcript.turns[0].timestamp.as_deref(),
+            Some("2026-06-22T01:01:00.000Z")
+        );
+        assert_eq!(transcript.turns[1].role, "assistant");
+        assert_eq!(transcript.turns[1].text, "你好，我在");
     }
 }

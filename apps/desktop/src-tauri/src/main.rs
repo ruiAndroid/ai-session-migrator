@@ -6,6 +6,7 @@
 use ai_session_migrator::codex::{
     self, ArchiveRequest, ArchiveResult, CommandError, DeleteArchivedRequest, DeleteArchivedResult,
     MigrationRequest, MigrationResult, ProviderRestartRequest, ProviderRestartResult, ScanResponse,
+    SessionTranscript, SessionTranscriptRequest,
 };
 use std::process::Command;
 
@@ -67,6 +68,13 @@ fn apply_activate_sessions(
 }
 
 #[tauri::command]
+fn read_session_transcript(
+    request: SessionTranscriptRequest,
+) -> std::result::Result<SessionTranscript, CommandError> {
+    codex::read_session_transcript(request)
+}
+
+#[tauri::command]
 fn switch_provider_and_restart(
     request: ProviderRestartRequest,
 ) -> std::result::Result<ProviderRestartResult, CommandError> {
@@ -112,6 +120,7 @@ fn main() {
             apply_delete_archived_sessions,
             apply_archive_sessions,
             apply_activate_sessions,
+            read_session_transcript,
             switch_provider_and_restart,
             open_path
         ])

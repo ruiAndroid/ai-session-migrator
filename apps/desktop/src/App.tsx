@@ -12,6 +12,7 @@ import {
   FolderOpen,
   HardDrive,
   ListFilter,
+  MessageSquareText,
   Power,
   RefreshCw,
   Search,
@@ -30,6 +31,7 @@ import type {
   MigrationResult,
   ProviderRestartResult,
   ScanResponse,
+  SessionTranscript,
   ThreadRow
 } from "./domain/session";
 import "./styles.css";
@@ -45,7 +47,7 @@ type AppProps = {
   resolveDefaultCodexHome?: DefaultCodexHomeResolver;
 };
 
-type LoadingState = "idle" | "scan" | "preview" | "apply" | "delete" | "archive" | "restart";
+type LoadingState = "idle" | "scan" | "preview" | "apply" | "delete" | "archive" | "activate" | "restart";
 
 type PendingLifecycleAction = {
   action: "archive" | "activate";
@@ -78,6 +80,10 @@ export default function App({
   const [customTargetProvider, setCustomTargetProvider] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [detailsRow, setDetailsRow] = useState<ThreadRow | null>(null);
+  const [transcriptRow, setTranscriptRow] = useState<ThreadRow | null>(null);
+  const [transcript, setTranscript] = useState<SessionTranscript | null>(null);
+  const [transcriptLoading, setTranscriptLoading] = useState(false);
+  const [transcriptError, setTranscriptError] = useState<DisplayError | null>(null);
   const [previewResult, setPreviewResult] = useState<MigrationResult | null>(null);
   const [previewRequestKey, setPreviewRequestKey] = useState("");
   const [completionNotice, setCompletionNotice] = useState<CompletionNotice | null>(null);
@@ -175,6 +181,7 @@ export default function App({
       setCustomTargetProvider("");
       setSelectedIds(threadIdsForSource(response.dashboard.rows, defaultSourceProvider));
       setDetailsRow(null);
+      closeTranscript();
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -340,7 +347,7 @@ export default function App({
     }
     const pending = pendingLifecycleAction;
     setPendingLifecycleAction(null);
-    setLoading("archive");
+    setLoading(pending.action);
     setError(null);
     setPreviewResult(null);
     setPreviewRequestKey("");
@@ -389,6 +396,9 @@ export default function App({
     });
     setSelectedIds((current) => current.filter((threadId) => !deleted.has(threadId)));
     setDetailsRow((current) => (current && deleted.has(current.threadId) ? null : current));
+    if (transcriptRow && deleted.has(transcriptRow.threadId)) {
+      closeTranscript();
+    }
   }
 
   function toggleSession(threadId: string) {
@@ -413,6 +423,34 @@ export default function App({
     setDetailsRow(row);
   }
 
+  async function openTranscript(row: ThreadRow) {
+    if (loading !== "idle") {
+      return;
+    }
+    setTranscriptRow(row);
+    setTranscript(null);
+    setTranscriptError(null);
+    setTranscriptLoading(true);
+    try {
+      const loadedTranscript = await migrationApi.readSessionTranscript({
+        codexHome: codexHome.trim(),
+        threadId: row.threadId
+      });
+      setTranscript(loadedTranscript);
+    } catch (caught) {
+      setTranscriptError(errorMessage(caught));
+    } finally {
+      setTranscriptLoading(false);
+    }
+  }
+
+  function closeTranscript() {
+    setTranscriptRow(null);
+    setTranscript(null);
+    setTranscriptError(null);
+    setTranscriptLoading(false);
+  }
+
   function handleCodexHomeChange(value: string) {
     userEditedCodexHome.current = true;
     setCodexHome(value);
@@ -431,6 +469,7 @@ export default function App({
     setCustomTargetProvider("");
     setSelectedIds([]);
     setDetailsRow(null);
+    closeTranscript();
     setPreviewResult(null);
     setPreviewRequestKey("");
     setCompletionNotice(null);
@@ -468,6 +507,12 @@ export default function App({
     setDetailsRow((current) =>
       current && (!existingThreadIds.has(current.threadId) || changedThreadIds.has(current.threadId)) ? null : current
     );
+    if (
+      transcriptRow &&
+      (!existingThreadIds.has(transcriptRow.threadId) || changedThreadIds.has(transcriptRow.threadId))
+    ) {
+      closeTranscript();
+    }
   }
 
   return (
@@ -688,6 +733,7 @@ export default function App({
                   disabled={loading !== "idle"}
                   onToggleSelected={() => toggleSession(row.threadId)}
                   onOpenDetails={() => openDetails(row)}
+                  onOpenTranscript={() => openTranscript(row)}
                   onArchive={() => handleArchiveRow(row)}
                   onActivate={() => handleActivateRow(row)}
                   onDeleteArchived={() => handleDeleteArchivedRow(row)}
@@ -709,6 +755,8 @@ export default function App({
           onConfirm={confirmApply}
         />
       ) : null}
+
+      {loading !== "idle" ? <OperationLoadingDialog loading={loading} /> : null}
 
       {pendingDeleteArchivedThreadIds ? (
         <ConfirmDeleteArchivedDialog
@@ -732,6 +780,16 @@ export default function App({
           row={detailsRow}
           targetProvider={resolvedTargetProvider || "未选择"}
           onClose={() => setDetailsRow(null)}
+        />
+      ) : null}
+
+      {transcriptRow ? (
+        <SessionTranscriptDialog
+          row={transcriptRow}
+          transcript={transcript}
+          loading={transcriptLoading}
+          error={transcriptError}
+          onClose={closeTranscript}
         />
       ) : null}
 
@@ -761,6 +819,7 @@ function SessionItem({
   disabled,
   onToggleSelected,
   onOpenDetails,
+  onOpenTranscript,
   onArchive,
   onActivate,
   onDeleteArchived
@@ -770,6 +829,7 @@ function SessionItem({
   disabled: boolean;
   onToggleSelected: () => void;
   onOpenDetails: () => void;
+  onOpenTranscript: () => void;
   onArchive: () => void;
   onActivate: () => void;
   onDeleteArchived: () => void;
@@ -809,6 +869,10 @@ function SessionItem({
       </div>
 
       <div className="session-actions" aria-label="会话操作">
+        <button className="row-action-button" type="button" disabled={disabled} onClick={onOpenTranscript}>
+          <MessageSquareText aria-hidden="true" size={15} />
+          查看记录
+        </button>
         {row.lifecycle === "active" ? (
           <button className="row-action-button" type="button" disabled={disabled} onClick={onArchive}>
             <Archive aria-hidden="true" size={15} />
@@ -1009,6 +1073,68 @@ function ConfirmMigrationDialog({
   );
 }
 
+const loadingCopy: Record<Exclude<LoadingState, "idle">, { title: string; body: string; note: string }> = {
+  scan: {
+    title: "正在扫描",
+    body: "正在读取 Codex 会话目录",
+    note: "完成后会自动刷新 provider 和会话列表。"
+  },
+  preview: {
+    title: "正在预览",
+    body: "正在检查选中会话的迁移计划",
+    note: "这一步不会写入文件。"
+  },
+  apply: {
+    title: "正在迁移",
+    body: "正在创建备份并写入会话",
+    note: "请保持应用打开，完成后会自动刷新列表。"
+  },
+  delete: {
+    title: "正在删除",
+    body: "正在创建备份并删除已归档会话",
+    note: "请保持应用打开，完成后会更新会话列表。"
+  },
+  archive: {
+    title: "正在归档",
+    body: "正在创建备份并移动会话文件",
+    note: "请保持应用打开，完成后会自动刷新列表。"
+  },
+  activate: {
+    title: "正在激活",
+    body: "正在创建备份并恢复会话文件",
+    note: "请保持应用打开，完成后会自动刷新列表。"
+  },
+  restart: {
+    title: "正在重启",
+    body: "正在切换 Codex provider 并重启应用",
+    note: "请等待系统完成关闭和重新打开。"
+  }
+};
+
+function OperationLoadingDialog({ loading }: { loading: Exclude<LoadingState, "idle"> }) {
+  const copy = loadingCopy[loading];
+  const titleId = `operation-loading-${loading}-title`;
+  return (
+    <div className="modal-backdrop">
+      <section aria-labelledby={titleId} aria-modal="true" className="confirm-dialog loading-dialog" role="dialog">
+        <div className="confirm-dialog-header">
+          <span className="confirm-dialog-icon loading-dialog-icon">
+            <RefreshCw aria-hidden="true" size={20} />
+          </span>
+          <div>
+            <p className="eyebrow">正在处理</p>
+            <h3 id={titleId}>{copy.title}</h3>
+          </div>
+        </div>
+        <div className="confirm-dialog-body">
+          <p>{copy.body}</p>
+          <p>{copy.note}</p>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function ConfirmRestartDialog({
   targetProvider,
   onCancel,
@@ -1097,6 +1223,72 @@ function SessionDetailsDialog({
             <dd>{row.path}</dd>
           </div>
         </dl>
+        <div className="confirm-dialog-actions">
+          <button className="primary-button" type="button" onClick={onClose}>
+            关闭
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function SessionTranscriptDialog({
+  row,
+  transcript,
+  loading,
+  error,
+  onClose
+}: {
+  row: ThreadRow;
+  transcript: SessionTranscript | null;
+  loading: boolean;
+  error: DisplayError | null;
+  onClose: () => void;
+}) {
+  const titleId = `session-transcript-${row.threadId}`;
+  const turns = transcript?.turns ?? [];
+  return (
+    <div className="modal-backdrop">
+      <section aria-labelledby={titleId} aria-modal="true" className="details-dialog transcript-dialog" role="dialog">
+        <div className="confirm-dialog-header">
+          <span className="confirm-dialog-icon transcript">
+            <MessageSquareText aria-hidden="true" size={20} />
+          </span>
+          <div>
+            <p className="eyebrow">会话记录</p>
+            <h3 id={titleId}>{row.displayName} 会话记录</h3>
+          </div>
+        </div>
+
+        <div className="transcript-list">
+          {loading ? (
+            <div className="transcript-state">
+              <RefreshCw aria-hidden="true" size={18} />
+              正在读取会话记录...
+            </div>
+          ) : null}
+          {!loading && error ? (
+            <div className="transcript-state error" role="alert">
+              {error.message}
+            </div>
+          ) : null}
+          {!loading && !error && turns.length === 0 ? (
+            <div className="transcript-state">这条会话暂时没有可展示的用户/助手消息。</div>
+          ) : null}
+          {!loading && !error
+            ? turns.map((turn) => (
+                <article className={`transcript-turn ${turn.role}`} key={`${turn.index}-${turn.role}`}>
+                  <div className="transcript-turn-meta">
+                    <span>{transcriptRoleLabel(turn.role)}</span>
+                    {turn.timestamp ? <time>{formatTranscriptTime(turn.timestamp)}</time> : null}
+                  </div>
+                  <p className="transcript-text">{turn.text}</p>
+                </article>
+              ))
+            : null}
+        </div>
+
         <div className="confirm-dialog-actions">
           <button className="primary-button" type="button" onClick={onClose}>
             关闭
@@ -1277,6 +1469,30 @@ function lifecycleRank(row: ThreadRow) {
 
 function lifecycleLabel(lifecycle: ThreadRow["lifecycle"]) {
   return lifecycle === "archived" ? "已归档" : "活跃";
+}
+
+function transcriptRoleLabel(role: string) {
+  const labels: Record<string, string> = {
+    user: "用户",
+    assistant: "助手",
+    system: "系统",
+    tool: "工具",
+    other: "其他"
+  };
+  return labels[role] ?? "其他";
+}
+
+function formatTranscriptTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
 }
 
 function issueSummary(issueCodes: string[]) {

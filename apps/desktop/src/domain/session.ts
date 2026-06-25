@@ -72,6 +72,11 @@ export type ProviderRestartRequest = {
   targetProvider: string;
 };
 
+export type SessionTranscriptRequest = {
+  codexHome: string;
+  threadId: string;
+};
+
 export type ArchiveResult = {
   changedThreads: string[];
   backupDir: string | null;
@@ -97,6 +102,22 @@ export type ProviderRestartResult = {
   restartAttempted: boolean;
   restarted: boolean;
   restartMessage: string;
+};
+
+export type TranscriptRole = "user" | "assistant" | "system" | "tool" | "other";
+
+export type TranscriptTurn = {
+  role: TranscriptRole;
+  text: string;
+  timestamp: string | null;
+  index: number;
+};
+
+export type SessionTranscript = {
+  threadId: string;
+  title: string;
+  path: string;
+  turns: TranscriptTurn[];
 };
 
 export type CommandError = {
