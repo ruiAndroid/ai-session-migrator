@@ -115,6 +115,7 @@ pub struct ArchiveRequest {
 pub struct SessionTranscriptRequest {
     pub codex_home: String,
     pub thread_id: String,
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -132,6 +133,7 @@ pub struct SessionTranscript {
     pub thread_id: String,
     pub title: String,
     pub path: String,
+    pub omitted_turns: usize,
     pub turns: Vec<TranscriptTurn>,
 }
 
@@ -283,6 +285,7 @@ mod tests {
         let transcript = read_session_transcript(SessionTranscriptRequest {
             codex_home: codex.display().to_string(),
             thread_id: thread_id.to_string(),
+            path: None,
         })
         .unwrap();
 
@@ -298,5 +301,68 @@ mod tests {
         );
         assert_eq!(transcript.turns[1].role, "assistant");
         assert_eq!(transcript.turns[1].text, "你好，我在");
+    }
+
+    #[test]
+    fn read_session_transcript_uses_requested_path_without_scanning_other_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let codex = temp.path().join(".codex");
+        let thread_id = "019eee21-9343-7f30-971e-b01e55a058c8";
+        let target_path =
+            codex.join("sessions/2026/06/22/rollout-a-019eee21-9343-7f30-971e-b01e55a058c8.jsonl");
+        let broken_path =
+            codex.join("sessions/2026/06/22/rollout-b-019eee22-9343-7f30-971e-b01e55a058c8.jsonl");
+        std::fs::create_dir_all(target_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &target_path,
+            format!(
+                "{{\"timestamp\":\"2026-06-22T01:00:00.000Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"{thread_id}\",\"timestamp\":\"2026-06-22T01:00:00.000Z\",\"cwd\":\"D:\\\\work\",\"source\":\"vscode\",\"model_provider\":\"funai\",\"cli_version\":\"0.140.0\"}}}}\n\
+                 {{\"timestamp\":\"2026-06-22T01:01:00.000Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"message\",\"role\":\"user\",\"content\":[{{\"type\":\"input_text\",\"text\":\"只读目标文件\"}}]}}}}\n"
+            ),
+        )
+        .unwrap();
+        std::fs::write(&broken_path, "not-json\n").unwrap();
+
+        let transcript = read_session_transcript(SessionTranscriptRequest {
+            codex_home: codex.display().to_string(),
+            thread_id: thread_id.to_string(),
+            path: Some(target_path.display().to_string()),
+        })
+        .unwrap();
+
+        assert_eq!(transcript.thread_id, thread_id);
+        assert_eq!(transcript.turns.len(), 1);
+        assert_eq!(transcript.turns[0].text, "只读目标文件");
+    }
+
+    #[test]
+    fn read_session_transcript_limits_large_conversations_to_recent_turns() {
+        let temp = tempfile::tempdir().unwrap();
+        let codex = temp.path().join(".codex");
+        let thread_id = "019eee31-9343-7f30-971e-b01e55a058c8";
+        let path =
+            codex.join("sessions/2026/06/22/rollout-a-019eee31-9343-7f30-971e-b01e55a058c8.jsonl");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut jsonl = format!(
+            "{{\"timestamp\":\"2026-06-22T01:00:00.000Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"{thread_id}\",\"timestamp\":\"2026-06-22T01:00:00.000Z\",\"cwd\":\"D:\\\\work\",\"source\":\"vscode\",\"model_provider\":\"funai\",\"cli_version\":\"0.140.0\"}}}}\n"
+        );
+        for index in 0..305 {
+            jsonl.push_str(&format!(
+                "{{\"timestamp\":\"2026-06-22T01:01:00.000Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"message\",\"role\":\"user\",\"content\":[{{\"type\":\"input_text\",\"text\":\"turn {index}\"}}]}}}}\n"
+            ));
+        }
+        std::fs::write(&path, jsonl).unwrap();
+
+        let transcript = read_session_transcript(SessionTranscriptRequest {
+            codex_home: codex.display().to_string(),
+            thread_id: thread_id.to_string(),
+            path: Some(path.display().to_string()),
+        })
+        .unwrap();
+
+        assert_eq!(transcript.omitted_turns, 5);
+        assert_eq!(transcript.turns.len(), 300);
+        assert_eq!(transcript.turns[0].text, "turn 5");
+        assert_eq!(transcript.turns[299].text, "turn 304");
     }
 }

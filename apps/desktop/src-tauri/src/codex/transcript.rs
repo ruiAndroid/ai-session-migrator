@@ -7,12 +7,23 @@ use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+const MAX_TRANSCRIPT_TURNS: usize = 300;
+
 pub fn read_session_transcript(request: SessionTranscriptRequest) -> Result<SessionTranscript> {
     let codex_home = Path::new(&request.codex_home);
-    let file_path = find_session_file(codex_home, &request.thread_id)?;
+    let file_path = requested_session_file(codex_home, &request)?;
     let raw = fs::read(&file_path)
         .map_err(|error| CommandError::io("read session transcript", file_path.display(), error))?;
     let metadata = metadata_from_bytes(&raw, &file_path)?;
+    if metadata.thread_id != request.thread_id {
+        return Err(CommandError::new(
+            "selected_thread_missing",
+            format!(
+                "Selected session does not match requested id: {}",
+                request.thread_id
+            ),
+        ));
+    }
     let text = session_text(&raw, &file_path)?;
     let mut turns = Vec::new();
 
@@ -40,12 +51,57 @@ pub fn read_session_transcript(request: SessionTranscriptRequest) -> Result<Sess
         }
     }
 
+    let omitted_turns = turns.len().saturating_sub(MAX_TRANSCRIPT_TURNS);
+    if omitted_turns > 0 {
+        turns = turns.split_off(omitted_turns);
+    }
+    for (index, turn) in turns.iter_mut().enumerate() {
+        turn.index = index;
+    }
+
     Ok(SessionTranscript {
         thread_id: metadata.thread_id,
         title: metadata.title,
         path: file_path.display().to_string(),
+        omitted_turns,
         turns,
     })
+}
+
+fn requested_session_file(
+    codex_home: &Path,
+    request: &SessionTranscriptRequest,
+) -> Result<PathBuf> {
+    if let Some(path) = request
+        .path
+        .as_deref()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+    {
+        let path = PathBuf::from(path);
+        if !path.exists() {
+            return Err(CommandError::new(
+                "selected_thread_missing",
+                format!("Selected session file is missing: {}", path.display()),
+            ));
+        }
+        if !path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("rollout-") && name.ends_with(".jsonl"))
+        {
+            return Err(CommandError::new(
+                "selected_thread_missing",
+                format!(
+                    "Selected session path is not a rollout JSONL file: {}",
+                    path.display()
+                ),
+            ));
+        }
+        return Ok(path);
+    }
+
+    find_session_file(codex_home, &request.thread_id)
 }
 
 fn find_session_file(codex_home: &Path, thread_id: &str) -> Result<PathBuf> {

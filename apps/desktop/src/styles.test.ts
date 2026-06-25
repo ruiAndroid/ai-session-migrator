@@ -40,10 +40,13 @@ test("transcript dialog keeps long conversation records scrollable", () => {
   const dialog = cssRule(".transcript-dialog");
   const list = cssRule(".transcript-list");
   const text = cssRule(".transcript-text");
+  const omitted = cssRule(".transcript-omitted");
 
   expect(dialog).toContain("width: min(860px, 100%)");
   expect(list).toContain("overflow-y: auto");
   expect(list).toContain("min-height: 0");
   expect(text).toContain("white-space: pre-wrap");
   expect(text).toContain("overflow-wrap: anywhere");
+  expect(omitted).toContain("background: rgba(255, 243, 223, 0.64)");
+  expect(omitted).toContain("font-size: 13px");
 });

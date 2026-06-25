@@ -75,6 +75,7 @@ export type ProviderRestartRequest = {
 export type SessionTranscriptRequest = {
   codexHome: string;
   threadId: string;
+  path: string;
 };
 
 export type ArchiveResult = {
@@ -117,6 +118,7 @@ export type SessionTranscript = {
   threadId: string;
   title: string;
   path: string;
+  omittedTurns: number;
   turns: TranscriptTurn[];
 };
 

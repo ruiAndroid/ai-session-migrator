@@ -73,6 +73,7 @@ export default function App({
   resolveDefaultCodexHome = resolveDesktopCodexHome
 }: AppProps) {
   const userEditedCodexHome = useRef(false);
+  const transcriptRequestSeq = useRef(0);
   const [codexHome, setCodexHome] = useState(fallbackCodexHome);
   const [scanResponse, setScanResponse] = useState<ScanResponse | null>(null);
   const [sourceProvider, setSourceProvider] = useState(ALL_SOURCES);
@@ -431,20 +432,31 @@ export default function App({
     setTranscript(null);
     setTranscriptError(null);
     setTranscriptLoading(true);
+    const requestSeq = ++transcriptRequestSeq.current;
     try {
       const loadedTranscript = await migrationApi.readSessionTranscript({
         codexHome: codexHome.trim(),
-        threadId: row.threadId
+        threadId: row.threadId,
+        path: row.path
       });
+      if (requestSeq !== transcriptRequestSeq.current) {
+        return;
+      }
       setTranscript(loadedTranscript);
     } catch (caught) {
+      if (requestSeq !== transcriptRequestSeq.current) {
+        return;
+      }
       setTranscriptError(errorMessage(caught));
     } finally {
-      setTranscriptLoading(false);
+      if (requestSeq === transcriptRequestSeq.current) {
+        setTranscriptLoading(false);
+      }
     }
   }
 
   function closeTranscript() {
+    transcriptRequestSeq.current += 1;
     setTranscriptRow(null);
     setTranscript(null);
     setTranscriptError(null);
@@ -1262,6 +1274,11 @@ function SessionTranscriptDialog({
         </div>
 
         <div className="transcript-list">
+          {!loading && !error && transcript && transcript.omittedTurns > 0 ? (
+            <div className="transcript-omitted">
+              记录较多，已优先展示最近 {transcript.turns.length} 条，前面 {transcript.omittedTurns} 条已省略。
+            </div>
+          ) : null}
           {loading ? (
             <div className="transcript-state">
               <RefreshCw aria-hidden="true" size={18} />

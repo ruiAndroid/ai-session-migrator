@@ -131,6 +131,7 @@ const activeTranscript: SessionTranscript = {
   threadId: activeThreadId,
   title: "活跃 provider 会话",
   path: `${fixtureCodexHome}\\sessions\\rollout-a.jsonl`,
+  omittedTurns: 0,
   turns: [
     {
       role: "user",
@@ -317,7 +318,8 @@ test("session transcript opens in a read-only dialog", async () => {
   await waitFor(() => {
     expect(api.readSessionTranscript).toHaveBeenCalledWith({
       codexHome: fixtureCodexHome,
-      threadId: activeThreadId
+      threadId: activeThreadId,
+      path: `${fixtureCodexHome}\\sessions\\rollout-a.jsonl`
     });
   });
 
@@ -329,6 +331,45 @@ test("session transcript opens in a read-only dialog", async () => {
 
   await user.click(within(dialog).getByRole("button", { name: "关闭" }));
   expect(screen.queryByRole("dialog", { name: "活跃 provider 会话 会话记录" })).not.toBeInTheDocument();
+});
+
+test("closing transcript dialog ignores stale pending responses", async () => {
+  const api = fakeApi();
+  const pendingTranscript = deferred<SessionTranscript>();
+  vi.mocked(api.readSessionTranscript).mockReturnValueOnce(pendingTranscript.promise);
+  const { user } = await renderWorkflow(api);
+
+  await user.click(screen.getByRole("button", { name: /扫描会话/ }));
+  const activeRow = await screen.findByRole("article", { name: "活跃 provider 会话" });
+  await user.click(within(activeRow).getByRole("button", { name: "查看记录" }));
+
+  const loadingDialog = await screen.findByRole("dialog", { name: "活跃 provider 会话 会话记录" });
+  expect(loadingDialog).toHaveTextContent("正在读取会话记录");
+  await user.click(within(loadingDialog).getByRole("button", { name: "关闭" }));
+  expect(screen.queryByRole("dialog", { name: "活跃 provider 会话 会话记录" })).not.toBeInTheDocument();
+
+  pendingTranscript.resolve(activeTranscript);
+
+  await waitFor(() => {
+    expect(screen.queryByRole("dialog", { name: "活跃 provider 会话 会话记录" })).not.toBeInTheDocument();
+  });
+});
+
+test("session transcript reports omitted older turns when response is capped", async () => {
+  const api = fakeApi();
+  vi.mocked(api.readSessionTranscript).mockResolvedValueOnce({
+    ...activeTranscript,
+    omittedTurns: 12,
+    turns: activeTranscript.turns.slice(0, 1)
+  });
+  const { user } = await renderWorkflow(api);
+
+  await user.click(screen.getByRole("button", { name: /扫描会话/ }));
+  const activeRow = await screen.findByRole("article", { name: "活跃 provider 会话" });
+  await user.click(within(activeRow).getByRole("button", { name: "查看记录" }));
+
+  const dialog = await screen.findByRole("dialog", { name: "活跃 provider 会话 会话记录" });
+  expect(dialog).toHaveTextContent("记录较多，已优先展示最近 1 条，前面 12 条已省略。");
 });
 
 test("preview sends selected visible rows and target provider to the API", async () => {

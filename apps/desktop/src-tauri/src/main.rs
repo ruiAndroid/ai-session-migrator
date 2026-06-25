@@ -68,10 +68,17 @@ fn apply_activate_sessions(
 }
 
 #[tauri::command]
-fn read_session_transcript(
+async fn read_session_transcript(
     request: SessionTranscriptRequest,
 ) -> std::result::Result<SessionTranscript, CommandError> {
-    codex::read_session_transcript(request)
+    tauri::async_runtime::spawn_blocking(move || codex::read_session_transcript(request))
+        .await
+        .map_err(|error| {
+            CommandError::new(
+                "transcript_task_failed",
+                format!("failed to read session transcript: {error}"),
+            )
+        })?
 }
 
 #[tauri::command]
