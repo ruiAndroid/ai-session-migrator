@@ -1,7 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import SplashScreen from "./SplashScreen";
+import SplashScreen, { DEFAULT_SPLASH_DURATION_MS } from "./SplashScreen";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -45,4 +45,8 @@ test("startup splash completes immediately when reduced motion is preferred", as
   await waitFor(() => {
     expect(onComplete).toHaveBeenCalledTimes(1);
   });
+});
+
+test("startup splash default duration leaves room for the animation to breathe", () => {
+  expect(DEFAULT_SPLASH_DURATION_MS).toBeGreaterThanOrEqual(2800);
 });

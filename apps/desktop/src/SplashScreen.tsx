@@ -5,12 +5,14 @@ import { useRef } from "react";
 
 gsap.registerPlugin(useGSAP);
 
+export const DEFAULT_SPLASH_DURATION_MS = 3000;
+
 type SplashScreenProps = {
   durationMs?: number;
   onComplete: () => void;
 };
 
-export default function SplashScreen({ durationMs = 1800, onComplete }: SplashScreenProps) {
+export default function SplashScreen({ durationMs = DEFAULT_SPLASH_DURATION_MS, onComplete }: SplashScreenProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const reducedMotion =
     typeof window !== "undefined" &&
@@ -26,7 +28,7 @@ export default function SplashScreen({ durationMs = 1800, onComplete }: SplashSc
         };
       }
 
-      const timeScale = Math.max(durationMs / 1800, 0.001);
+      const timeScale = Math.max(durationMs / DEFAULT_SPLASH_DURATION_MS, 0.001);
       const splashRoot = rootRef.current;
       const timeline = gsap.timeline({
         defaults: { ease: "power3.out" },
@@ -41,25 +43,25 @@ export default function SplashScreen({ durationMs = 1800, onComplete }: SplashSc
       gsap.set(".splash-status", { autoAlpha: 0, y: 8 });
 
       timeline
-        .to(".splash-stage", { autoAlpha: 1, scale: 1, y: 0, duration: 0.22 * timeScale })
-        .to(".splash-ring", { autoAlpha: 1, scale: 1, rotation: 0, duration: 0.32 * timeScale }, "<0.05")
+        .to(".splash-stage", { autoAlpha: 1, scale: 1, y: 0, duration: 0.38 * timeScale })
+        .to(".splash-ring", { autoAlpha: 1, scale: 1, rotation: 0, duration: 0.48 * timeScale }, "<0.08")
         .to(
           ".splash-flow-node",
           {
             autoAlpha: 1,
             scale: 1,
             y: 0,
-            stagger: { each: 0.06 * timeScale, from: "center" },
-            duration: 0.24 * timeScale
+            stagger: { each: 0.11 * timeScale, from: "center" },
+            duration: 0.36 * timeScale
           },
-          "<0.04"
+          "<0.08"
         )
-        .to(".splash-line", { autoAlpha: 1, scaleX: 1, stagger: 0.04 * timeScale, duration: 0.22 * timeScale }, "<0.08")
-        .to(".splash-word", { autoAlpha: 1, y: 0, stagger: 0.08 * timeScale, duration: 0.24 * timeScale }, "<0.08")
-        .to(".splash-status", { autoAlpha: 1, y: 0, duration: 0.18 * timeScale }, "<0.12")
-        .to(".splash-flow-node", { y: -5, stagger: 0.025 * timeScale, duration: 0.18 * timeScale }, ">-0.02")
-        .to(".splash-flow-node", { y: 0, stagger: 0.025 * timeScale, duration: 0.16 * timeScale }, ">-0.08")
-        .to(splashRoot, { autoAlpha: 0, scale: 1.01, duration: 0.26 * timeScale }, ">0.14");
+        .to(".splash-line", { autoAlpha: 1, scaleX: 1, stagger: 0.07 * timeScale, duration: 0.34 * timeScale }, "<0.14")
+        .to(".splash-word", { autoAlpha: 1, y: 0, stagger: 0.1 * timeScale, duration: 0.36 * timeScale }, "<0.12")
+        .to(".splash-status", { autoAlpha: 1, y: 0, duration: 0.28 * timeScale }, "<0.18")
+        .to(".splash-flow-node", { y: -6, stagger: 0.045 * timeScale, duration: 0.26 * timeScale }, ">0.08")
+        .to(".splash-flow-node", { y: 0, stagger: 0.045 * timeScale, duration: 0.24 * timeScale }, ">-0.08")
+        .to(splashRoot, { autoAlpha: 0, scale: 1.01, duration: 0.42 * timeScale }, ">0.34");
 
       return () => {
         timeline.kill();

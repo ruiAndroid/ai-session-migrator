@@ -4,8 +4,148 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AI Session Migrator</title>
+    <style>
+      :root {
+        background: #fbf8ff;
+      }
+
+      body {
+        margin: 0;
+        min-width: 0;
+        min-height: 100vh;
+        background:
+          linear-gradient(135deg, rgba(255, 219, 206, 0.92) 0%, rgba(251, 248, 255, 0.96) 42%),
+          linear-gradient(315deg, rgba(233, 221, 255, 0.88) 0%, rgba(255, 255, 255, 0.8) 48%),
+          #fbf8ff;
+      }
+
+      .preload-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 50;
+        display: grid;
+        place-items: center;
+        padding: 28px;
+        color: #1a1b22;
+        font-family:
+          "Plus Jakarta Sans", Inter, "Segoe UI", "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+      }
+
+      .preload-splash-card {
+        display: grid;
+        justify-items: center;
+        gap: 18px;
+        width: min(520px, 100%);
+        border: 1px solid rgba(255, 255, 255, 0.82);
+        border-radius: 30px;
+        padding: 42px;
+        background: rgba(255, 255, 255, 0.58);
+        box-shadow:
+          0 30px 90px rgba(47, 48, 56, 0.16),
+          inset 0 1px 0 rgba(255, 255, 255, 0.92);
+        text-align: center;
+      }
+
+      .preload-splash-mark {
+        display: grid;
+        width: 76px;
+        height: 76px;
+        place-items: center;
+        border-radius: 24px;
+        background: linear-gradient(135deg, #a53c05 0%, #6d3bd7 100%);
+        color: #ffffff;
+        box-shadow: 0 18px 40px rgba(109, 59, 215, 0.2);
+      }
+
+      .preload-splash-mark svg {
+        width: 34px;
+        height: 34px;
+      }
+
+      .preload-splash-kicker {
+        margin: 0;
+        color: #a53c05;
+        font-size: 13px;
+        font-weight: 850;
+        line-height: 1.2;
+      }
+
+      .preload-splash-title {
+        margin: 8px 0 0;
+        color: #101118;
+        font-size: 34px;
+        font-weight: 820;
+        line-height: 1.08;
+      }
+
+      .preload-splash-copy {
+        margin: 10px 0 0;
+        color: rgba(87, 66, 58, 0.74);
+        font-size: 15px;
+        font-weight: 650;
+        line-height: 1.45;
+      }
+
+      .preload-splash-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        min-height: 38px;
+        border: 1px solid rgba(223, 192, 181, 0.52);
+        border-radius: 999px;
+        padding: 0 16px;
+        background: rgba(255, 255, 255, 0.58);
+        color: rgba(87, 66, 58, 0.78);
+        font-size: 13px;
+        font-weight: 760;
+      }
+
+      .preload-splash-status span {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: #15803d;
+        box-shadow: 0 0 0 5px rgba(21, 128, 61, 0.12);
+      }
+
+      @media (max-width: 640px) {
+        .preload-splash {
+          padding: 16px;
+        }
+
+        .preload-splash-card {
+          border-radius: 24px;
+          padding: 30px 20px;
+        }
+
+        .preload-splash-title {
+          font-size: 27px;
+        }
+      }
+    </style>
   </head>
   <body>
+    <div id="preload-splash" class="preload-splash" role="status" aria-label="AI Session Migrator 启动中">
+      <section class="preload-splash-card">
+        <span class="preload-splash-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m16 3 4 4-4 4" />
+            <path d="M20 7H4" />
+            <path d="m8 21-4-4 4-4" />
+            <path d="M4 17h16" />
+          </svg>
+        </span>
+        <div>
+          <p class="preload-splash-kicker">Codex 会话迁移助手</p>
+          <h1 class="preload-splash-title">AI Session Migrator</h1>
+          <p class="preload-splash-copy">正在准备本地会话环境。</p>
+        </div>
+        <div class="preload-splash-status">
+          <span aria-hidden="true"></span>
+          启动中
+        </div>
+      </section>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

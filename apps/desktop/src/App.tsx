@@ -101,6 +101,10 @@ export default function App({
   const [pendingLifecycleAction, setPendingLifecycleAction] = useState<PendingLifecycleAction | null>(null);
   const [confirmingRestart, setConfirmingRestart] = useState(false);
 
+  useEffect(() => {
+    document.getElementById("preload-splash")?.remove();
+  }, []);
+
   const rows = scanResponse?.dashboard.rows ?? [];
   const sourceProviderChoices = useMemo(
     () => (scanResponse ? sourceProviderOptions(scanResponse, sourceProvider) : []),

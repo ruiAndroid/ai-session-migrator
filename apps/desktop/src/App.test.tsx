@@ -263,6 +263,8 @@ test("scan shows a blocking loading dialog while reading sessions", async () => 
 });
 
 test("app shows the GSAP startup splash by default", async () => {
+  document.body.insertAdjacentHTML("afterbegin", '<div id="preload-splash">Preload splash</div>');
+
   render(
     <App
       migrationApi={fakeApi()}
@@ -274,6 +276,7 @@ test("app shows the GSAP startup splash by default", async () => {
   expect(screen.getByRole("status", { name: "AI Session Migrator 启动闪屏" })).toHaveTextContent(
     "Codex 会话迁移助手"
   );
+  expect(document.getElementById("preload-splash")).not.toBeInTheDocument();
 });
 
 test("scan shows active sessions before archived sessions with lifecycle badges", async () => {
