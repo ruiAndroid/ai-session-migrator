@@ -50,3 +50,19 @@ test("transcript dialog keeps long conversation records scrollable", () => {
   expect(omitted).toContain("background: rgba(255, 243, 223, 0.64)");
   expect(omitted).toContain("font-size: 13px");
 });
+
+test("startup splash is fixed and only animates compositor-friendly properties", () => {
+  const splash = cssRule(".splash-screen");
+  const stage = cssRule(".splash-stage");
+  const flowNode = cssRule(".splash-flow-node");
+  const line = cssRule(".splash-line");
+
+  expect(splash).toContain("position: fixed");
+  expect(splash).toContain("inset: 0");
+  expect(splash).toContain("z-index: 40");
+  expect(stage).toContain("will-change: transform, opacity");
+  expect(flowNode).toContain("will-change: transform, opacity");
+  expect(line).toContain("transform-origin: center");
+  expect(stage).not.toContain("top:");
+  expect(flowNode).not.toContain("left:");
+});

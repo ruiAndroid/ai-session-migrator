@@ -211,7 +211,13 @@ function deferred<T>() {
 
 async function renderWorkflow(api = fakeApi()) {
   const user = userEvent.setup();
-  render(<App migrationApi={api} resolveDefaultCodexHome={() => Promise.resolve(fixtureCodexHome)} />);
+  render(
+    <App
+      migrationApi={api}
+      resolveDefaultCodexHome={() => Promise.resolve(fixtureCodexHome)}
+      showStartupSplash={false}
+    />
+  );
   await screen.findByDisplayValue(fixtureCodexHome);
   return { api, user };
 }
@@ -223,6 +229,7 @@ async function renderWorkflowWithDesktopActions(api = fakeApi(), desktopActions 
       migrationApi={api}
       desktopActions={desktopActions}
       resolveDefaultCodexHome={() => Promise.resolve(fixtureCodexHome)}
+      showStartupSplash={false}
     />
   );
   await screen.findByDisplayValue(fixtureCodexHome);
@@ -253,6 +260,20 @@ test("scan shows a blocking loading dialog while reading sessions", async () => 
     expect(screen.queryByRole("dialog", { name: "正在扫描" })).not.toBeInTheDocument();
   });
   expect(await screen.findByText("活跃 provider 会话")).toBeInTheDocument();
+});
+
+test("app shows the GSAP startup splash by default", async () => {
+  render(
+    <App
+      migrationApi={fakeApi()}
+      resolveDefaultCodexHome={() => Promise.resolve(fixtureCodexHome)}
+      startupSplashDurationMs={0}
+    />
+  );
+
+  expect(screen.getByRole("status", { name: "AI Session Migrator 启动闪屏" })).toHaveTextContent(
+    "Codex 会话迁移助手"
+  );
 });
 
 test("scan shows active sessions before archived sessions with lifecycle badges", async () => {

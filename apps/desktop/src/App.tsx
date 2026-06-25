@@ -34,6 +34,7 @@ import type {
   SessionTranscript,
   ThreadRow
 } from "./domain/session";
+import SplashScreen from "./SplashScreen";
 import "./styles.css";
 
 const ALL_SOURCES = "__all__";
@@ -45,6 +46,8 @@ type AppProps = {
   migrationApi?: MigrationApi;
   desktopActions?: DesktopActions;
   resolveDefaultCodexHome?: DefaultCodexHomeResolver;
+  showStartupSplash?: boolean;
+  startupSplashDurationMs?: number;
 };
 
 type LoadingState = "idle" | "scan" | "preview" | "apply" | "delete" | "archive" | "activate" | "restart";
@@ -70,10 +73,13 @@ type CompletionNotice = {
 export default function App({
   migrationApi = tauriMigrationApi,
   desktopActions = tauriDesktopActions,
-  resolveDefaultCodexHome = resolveDesktopCodexHome
+  resolveDefaultCodexHome = resolveDesktopCodexHome,
+  showStartupSplash = true,
+  startupSplashDurationMs
 }: AppProps) {
   const userEditedCodexHome = useRef(false);
   const transcriptRequestSeq = useRef(0);
+  const [startupSplashVisible, setStartupSplashVisible] = useState(showStartupSplash);
   const [codexHome, setCodexHome] = useState(fallbackCodexHome);
   const [scanResponse, setScanResponse] = useState<ScanResponse | null>(null);
   const [sourceProvider, setSourceProvider] = useState(ALL_SOURCES);
@@ -811,6 +817,10 @@ export default function App({
           onCancel={() => setConfirmingRestart(false)}
           onConfirm={confirmRestartCodex}
         />
+      ) : null}
+
+      {startupSplashVisible ? (
+        <SplashScreen durationMs={startupSplashDurationMs} onComplete={() => setStartupSplashVisible(false)} />
       ) : null}
     </main>
   );
