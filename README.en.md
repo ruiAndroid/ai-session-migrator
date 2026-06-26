@@ -40,7 +40,7 @@ AI Session Migrator gives you a safer desktop workflow:
 The easiest way to distribute builds is through GitHub Releases.
 
 1. Open the repository's **Releases** page.
-2. On Windows, download `AI-Session-Migrator-Windows-x64.exe`.
+2. On Windows, download `AI-Session-Migrator-Windows-x64-setup.exe`.
 3. On macOS, download `AI-Session-Migrator-macOS-universal-unsigned.dmg`.
 4. Run the app and click **扫描会话**.
 
@@ -94,25 +94,25 @@ For frontend-only debugging:
 npm run web:dev
 ```
 
-Build the desktop executable for the current system:
+Build the development verification executable for the current system:
 
 ```powershell
 npm run build
 ```
 
-The Windows executable is written to:
+The Windows development verification executable is written to:
 
 ```text
 apps/desktop/src-tauri/target/release/ai-session-migrator.exe
 ```
 
-Build installer bundles for the current system:
+Build distributable installer bundles for the current system:
 
 ```powershell
 npm --workspace apps/desktop run desktop:bundle
 ```
 
-Installer bundling may download external packaging tools such as WiX on Windows. If those downloads are blocked, the executable build above still works and remains the primary local verification target.
+Installer bundling may download external packaging tools such as NSIS/WiX on Windows. For user-facing releases, publish the installer artifact rather than `target/release/ai-session-migrator.exe`.
 
 macOS DMG builds must run on macOS, either locally on a Mac or through the GitHub Actions macOS runner.
 
@@ -131,10 +131,10 @@ cd apps/desktop/src-tauri
 cargo test --lib
 ```
 
-Run a desktop build:
+Run a desktop installer build:
 
 ```powershell
-npm run desktop:build
+npm run desktop:bundle
 ```
 
 On Windows, the desktop scripts automatically load the Visual Studio C++ environment when Visual Studio or Build Tools are installed. Desktop builds also require a Windows SDK component because Rust/Tauri links against Windows system libraries such as `kernel32.lib`.
@@ -150,7 +150,7 @@ git push origin v0.1.0
 
 The workflows upload these artifacts to the GitHub Release:
 
-- `AI-Session-Migrator-Windows-x64.exe`
+- `AI-Session-Migrator-Windows-x64-setup.exe`
 - `AI-Session-Migrator-macOS-universal-unsigned.dmg`
 
 ## Roadmap

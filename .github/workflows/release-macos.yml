@@ -40,7 +40,7 @@ jobs:
         run: cargo test --lib
 
       - name: Build macOS app bundle
-        run: npm --workspace apps/desktop run desktop:bundle -- --target universal-apple-darwin
+        run: npm --workspace apps/desktop run desktop:bundle -- --target universal-apple-darwin --bundles dmg
 
       - name: Collect DMG artifact
         shell: bash

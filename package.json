@@ -9,6 +9,7 @@
     "web:build": "npm --workspace apps/desktop run build",
     "desktop:dev": "npm --workspace apps/desktop run desktop:dev",
     "desktop:build": "npm --workspace apps/desktop run desktop:build",
+    "desktop:bundle": "npm --workspace apps/desktop run desktop:bundle",
     "build": "npm --workspace apps/desktop run desktop:build",
     "test": "npm --workspace apps/desktop run test"
   },

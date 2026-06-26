@@ -40,7 +40,7 @@ AI Session Migrator 提供一个更安全、更直观的桌面流程：
 推荐通过 GitHub Releases 下载：
 
 1. 打开仓库的 **Releases** 页面。
-2. Windows 用户下载 `AI-Session-Migrator-Windows-x64.exe`。
+2. Windows 用户下载 `AI-Session-Migrator-Windows-x64-setup.exe`。
 3. macOS 用户下载 `AI-Session-Migrator-macOS-universal-unsigned.dmg`。
 4. 运行应用，点击 **扫描会话**。
 
@@ -94,25 +94,25 @@ npm run dev
 npm run web:dev
 ```
 
-构建当前系统的桌面可执行文件：
+构建当前系统的开发验证版可执行文件：
 
 ```powershell
 npm run build
 ```
 
-Windows exe 构建产物位置：
+Windows 开发验证版 exe 构建产物位置：
 
 ```text
 apps/desktop/src-tauri/target/release/ai-session-migrator.exe
 ```
 
-构建当前系统的安装包：
+构建当前系统的可分发安装包：
 
 ```powershell
 npm --workspace apps/desktop run desktop:bundle
 ```
 
-安装包构建可能会在 Windows 上下载 WiX 等外部打包工具。如果下载被阻断，exe 构建仍然可用，也是当前主要的本地验证目标。
+安装包构建可能会在 Windows 上下载 NSIS/WiX 等外部打包工具。对普通用户发布时，请使用安装包产物，不要直接分发 `target/release/ai-session-migrator.exe`。
 
 macOS DMG 需要在 macOS 上构建，或通过 GitHub Actions 的 macOS runner 自动构建。
 
@@ -131,10 +131,10 @@ cd apps/desktop/src-tauri
 cargo test --lib
 ```
 
-运行桌面构建：
+运行桌面安装包构建：
 
 ```powershell
-npm run desktop:build
+npm run desktop:bundle
 ```
 
 在 Windows 上，桌面脚本会尽量自动加载 Visual Studio C++ 编译环境。桌面构建还需要 Windows SDK，因为 Rust/Tauri 需要链接 `kernel32.lib` 等 Windows 系统库。
@@ -150,7 +150,7 @@ git push origin v0.1.0
 
 workflow 会把以下产物上传到 GitHub Release：
 
-- `AI-Session-Migrator-Windows-x64.exe`
+- `AI-Session-Migrator-Windows-x64-setup.exe`
 - `AI-Session-Migrator-macOS-universal-unsigned.dmg`
 
 ## 路线图

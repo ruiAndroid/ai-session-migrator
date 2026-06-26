@@ -1,4 +1,4 @@
-name: Release Windows executable
+name: Release Windows installer
 
 on:
   push:
@@ -35,28 +35,38 @@ jobs:
 
       - name: Run Rust tests
         working-directory: apps/desktop/src-tauri
-        run: cargo test --lib
+        run: cargo test --features desktop
 
-      - name: Build desktop executable
-        run: npm run desktop:build
+      - name: Build desktop installer
+        run: npm run desktop:bundle
 
-      - name: Rename executable
+      - name: Collect installer
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          $installer = Get-ChildItem `
+            -Path apps/desktop/src-tauri/target/release/bundle/nsis `
+            -Filter "*_x64-setup.exe" |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+
+          if (-not $installer) {
+            throw "No Windows NSIS installer was produced."
+          }
+
           Copy-Item `
-            -Path apps/desktop/src-tauri/target/release/ai-session-migrator.exe `
-            -Destination artifacts/AI-Session-Migrator-Windows-x64.exe
+            -LiteralPath $installer.FullName `
+            -Destination artifacts/AI-Session-Migrator-Windows-x64-setup.exe
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AI-Session-Migrator-Windows-x64
-          path: artifacts/AI-Session-Migrator-Windows-x64.exe
+          name: AI-Session-Migrator-Windows-x64-setup
+          path: artifacts/AI-Session-Migrator-Windows-x64-setup.exe
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/AI-Session-Migrator-Windows-x64.exe
+          files: artifacts/AI-Session-Migrator-Windows-x64-setup.exe
           body_path: docs/release-notes-v0.1.0.md

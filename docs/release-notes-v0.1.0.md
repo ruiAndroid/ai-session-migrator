@@ -26,12 +26,13 @@ Use it when you have old Codex sessions tied to a previous provider and want to 
 Download:
 
 ```text
-AI-Session-Migrator-Windows-x64.exe
+AI-Session-Migrator-Windows-x64-setup.exe
 AI-Session-Migrator-macOS-universal-unsigned.dmg
 ```
 
 ## Notes
 
+- On Windows, use the setup installer artifact. Do not launch or redistribute a raw Cargo-built `target/release/ai-session-migrator.exe`; that path is only for development verification.
 - The macOS DMG is currently unsigned. If macOS blocks the first launch, right-click the app and choose **Open**, or allow it from **System Settings > Privacy & Security**.
 - The UI is currently Chinese.
 - The app processes data locally and does not upload session files.
