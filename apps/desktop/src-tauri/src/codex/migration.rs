@@ -6,7 +6,8 @@ use crate::codex::{
     CommandError, MigrationRequest, MigrationResult, PlannedRepair, Result, ThreadLifecycle,
 };
 use serde_json::json;
-use std::collections::BTreeSet;
+use serde_json::Value;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -61,6 +62,7 @@ fn migrate_provider(request: MigrationRequest, apply: bool) -> Result<MigrationR
     let mut changed = Vec::new();
     let mut metadata_items = Vec::new();
     let mut fixed_files = Vec::new();
+    let title_overrides = title_overrides(&codex_home)?;
 
     for file in session_files(&codex_home)? {
         let raw = fs::read(&file.path)
@@ -79,7 +81,10 @@ fn migrate_provider(request: MigrationRequest, apply: bool) -> Result<MigrationR
             continue;
         }
         let fixed = replace_provider_marker(&raw, &target_provider)?;
-        let fixed_metadata = metadata_from_bytes(&fixed, &file.path)?;
+        let mut fixed_metadata = metadata_from_bytes(&fixed, &file.path)?;
+        if let Some(title) = title_overrides.get(&fixed_metadata.thread_id) {
+            fixed_metadata.title = title.clone();
+        }
         changed.push(fixed_metadata.thread_id.clone());
         metadata_items.push((fixed_metadata, file.lifecycle));
         fixed_files.push((file.path, fixed));
@@ -171,6 +176,68 @@ fn backup_inputs(codex_home: &Path, fixed_files: &[(PathBuf, Vec<u8>)]) -> Vec<P
     files
 }
 
+fn title_overrides(codex_home: &Path) -> Result<BTreeMap<String, String>> {
+    let mut titles = sqlite_titles(codex_home)?;
+    titles.extend(index_titles(codex_home)?);
+    Ok(titles)
+}
+
+fn index_titles(codex_home: &Path) -> Result<BTreeMap<String, String>> {
+    let path = codex_home.join("session_index.jsonl");
+    if !path.exists() {
+        return Ok(BTreeMap::new());
+    }
+    let text = fs::read_to_string(&path)
+        .map_err(|error| CommandError::io("read session index", path.display(), error))?;
+    let mut titles = BTreeMap::new();
+    for line in text.lines().filter(|line| !line.trim().is_empty()) {
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let Some(id) = value.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(title) = value
+            .get("thread_name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        titles.insert(id.to_string(), title.to_string());
+    }
+    Ok(titles)
+}
+
+fn sqlite_titles(codex_home: &Path) -> Result<BTreeMap<String, String>> {
+    let mut titles = BTreeMap::new();
+    for db in state_dbs(codex_home) {
+        let Ok(connection) = rusqlite::Connection::open_with_flags(
+            &db,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        ) else {
+            continue;
+        };
+        let Ok(mut statement) =
+            connection.prepare("select id, title from threads where title is not null and trim(title) != ''")
+        else {
+            continue;
+        };
+        let Ok(rows) = statement
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        else {
+            continue;
+        };
+        for row in rows {
+            if let Ok((id, title)) = row {
+                titles.entry(id).or_insert(title);
+            }
+        }
+    }
+    Ok(titles)
+}
+
 fn ensure_index(codex_home: &Path, item: &(SessionMetadata, ThreadLifecycle)) -> Result<()> {
     if item.1 == ThreadLifecycle::Archived {
         return Ok(());
@@ -209,7 +276,9 @@ fn iso_from_ms(value: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codex::test_support::{init_state_db, insert_state_row, write_jsonl};
+    use crate::codex::test_support::{
+        init_state_db, insert_state_row, insert_state_row_with_title, write_jsonl,
+    };
     use rusqlite::Connection;
 
     #[test]
@@ -289,6 +358,42 @@ mod tests {
         assert_eq!(row.0, "yihubangg");
         assert_eq!(row.1, 0);
         assert!(row.2.contains("你好"));
+    }
+
+    #[test]
+    fn apply_preserves_user_renamed_title_from_existing_state() {
+        let temp = tempfile::tempdir().unwrap();
+        let codex = temp.path().join(".codex");
+        let thread_id = "019eee11-9343-7f30-971e-b01e55a058c8";
+        let rollout =
+            codex.join("sessions/2026/06/22/rollout-a-019eee11-9343-7f30-971e-b01e55a058c8.jsonl");
+        write_jsonl(&rollout, thread_id, "funai", false, "old generated title");
+        fs::write(
+            codex.join("session_index.jsonl"),
+            format!("{{\"id\":\"{thread_id}\",\"thread_name\":\"renamed title\"}}\n"),
+        )
+        .unwrap();
+        let db = codex.join("state_5.sqlite");
+        init_state_db(&db);
+        insert_state_row_with_title(&db, thread_id, "funai", 0, "renamed title");
+
+        apply_provider_migration(MigrationRequest {
+            codex_home: codex.display().to_string(),
+            source_provider: Some("funai".to_string()),
+            target_provider: "yihubangg".to_string(),
+            thread_ids: vec![thread_id.to_string()],
+        })
+        .unwrap();
+
+        let connection = Connection::open(&db).unwrap();
+        let title: String = connection
+            .query_row(
+                "select title from threads where id=?1",
+                [thread_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(title, "renamed title");
     }
 
     #[test]
