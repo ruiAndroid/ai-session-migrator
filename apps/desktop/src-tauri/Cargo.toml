@@ -5,7 +5,7 @@ edition = "2021"
 
 [features]
 default = []
-desktop = ["dep:tauri"]
+desktop = ["dep:tauri", "tauri/tray-icon"]
 
 [[bin]]
 name = "ai-session-migrator"
