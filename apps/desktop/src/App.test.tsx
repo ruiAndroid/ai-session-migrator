@@ -361,6 +361,34 @@ test("session transcript opens in a read-only dialog", async () => {
   expect(screen.queryByRole("dialog", { name: "活跃 provider 会话 会话记录" })).not.toBeInTheDocument();
 });
 
+test("session transcript dialog constrains very long titles", async () => {
+  const longTitle =
+    "你是 FunClaw 工作台委托给本机 Codex CLI 的数字员工执行器。Assignment ID: b80d162e-d783-40c7-9a3d-a2440cabb349 Metadata JSON: {\"source\":\"WORKBENCH_MESSAGE\"}";
+  const api = fakeApi();
+  vi.mocked(api.scanCodexHome).mockResolvedValueOnce({
+    ...scanResponse,
+    dashboard: {
+      ...scanResponse.dashboard,
+      rows: [
+        {
+          ...scanResponse.dashboard.rows[0],
+          displayName: longTitle
+        }
+      ]
+    }
+  });
+  const { user } = await renderWorkflow(api);
+
+  await user.click(screen.getByRole("button", { name: /扫描会话/ }));
+  const activeRow = await screen.findByRole("article", { name: longTitle });
+  await user.click(within(activeRow).getByRole("button", { name: "查看记录" }));
+
+  const dialog = await screen.findByRole("dialog", { name: `${longTitle} 会话记录` });
+  expect(within(dialog).getByRole("heading", { name: `${longTitle} 会话记录` })).toHaveClass(
+    "transcript-dialog-title"
+  );
+});
+
 test("closing transcript dialog ignores stale pending responses", async () => {
   const api = fakeApi();
   const pendingTranscript = deferred<SessionTranscript>();

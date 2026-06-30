@@ -38,11 +38,15 @@ test("confirmation dialog content scrolls without hiding the action buttons", ()
 
 test("transcript dialog keeps long conversation records scrollable", () => {
   const dialog = cssRule(".transcript-dialog");
+  const title = cssRule(".transcript-dialog-title");
   const list = cssRule(".transcript-list");
   const text = cssRule(".transcript-text");
   const omitted = cssRule(".transcript-omitted");
 
   expect(dialog).toContain("width: min(860px, 100%)");
+  expect(title).toContain("-webkit-line-clamp: 2");
+  expect(title).toContain("overflow: hidden");
+  expect(title).toContain("overflow-wrap: anywhere");
   expect(list).toContain("overflow-y: auto");
   expect(list).toContain("min-height: 0");
   expect(text).toContain("white-space: pre-wrap");

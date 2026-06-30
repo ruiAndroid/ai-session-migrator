@@ -1284,9 +1284,11 @@ function SessionTranscriptDialog({
           <span className="confirm-dialog-icon transcript">
             <MessageSquareText aria-hidden="true" size={20} />
           </span>
-          <div>
+          <div className="transcript-dialog-title-wrap">
             <p className="eyebrow">会话记录</p>
-            <h3 id={titleId}>{row.displayName} 会话记录</h3>
+            <h3 className="transcript-dialog-title" id={titleId}>
+              {row.displayName} 会话记录
+            </h3>
           </div>
         </div>
 

@@ -1500,6 +1500,19 @@ h3 {
   width: min(860px, 100%);
 }
 
+.transcript-dialog-title-wrap {
+  min-width: 0;
+}
+
+.transcript-dialog-title {
+  display: -webkit-box;
+  max-width: 100%;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
 .transcript-list {
   display: grid;
   align-content: start;
