@@ -752,6 +752,48 @@ h3 {
   box-shadow: inset 4px 0 0 rgba(255, 126, 71, 0.2);
 }
 
+.session-row-active {
+  box-shadow: inset 4px 0 0 rgba(21, 128, 61, 0.12);
+}
+
+.session-row-archived {
+  background:
+    linear-gradient(90deg, rgba(231, 229, 228, 0.46), rgba(255, 255, 255, 0.38)),
+    rgba(255, 255, 255, 0.34);
+  box-shadow: inset 4px 0 0 rgba(120, 113, 108, 0.26);
+}
+
+.session-row-archived:hover {
+  background:
+    linear-gradient(90deg, rgba(231, 229, 228, 0.58), rgba(255, 255, 255, 0.7)),
+    rgba(255, 255, 255, 0.72);
+  box-shadow: inset 4px 0 0 rgba(120, 113, 108, 0.4);
+}
+
+.session-row-archived .session-icon {
+  background: rgba(231, 229, 228, 0.9);
+  color: rgba(87, 83, 78, 0.76);
+}
+
+.session-row-archived .session-title-wrap strong {
+  color: rgba(41, 37, 36, 0.72);
+}
+
+.session-row-archived .session-copy p,
+.session-row-archived .session-meta {
+  color: rgba(87, 83, 78, 0.58);
+}
+
+.session-row-archived .session-select span {
+  border-color: rgba(120, 113, 108, 0.48);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.session-row-archived .session-actions,
+.session-row-archived .row-action-button {
+  opacity: 1;
+}
+
 .session-select {
   display: grid;
   place-items: center start;

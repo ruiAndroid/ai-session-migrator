@@ -860,8 +860,11 @@ function SessionItem({
   onActivate: () => void;
   onDeleteArchived: () => void;
 }) {
+  const lifecycleClassName =
+    row.lifecycle === "archived" ? "session-row session-row-archived" : "session-row session-row-active";
+
   return (
-    <article className="session-row" aria-label={row.displayName}>
+    <article className={lifecycleClassName} aria-label={row.displayName}>
       <label className="session-select">
         <input
           aria-label={`选择会话：${row.displayName}`}

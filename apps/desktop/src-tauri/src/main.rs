@@ -11,7 +11,7 @@ use ai_session_migrator::codex::{
 use std::process::Command;
 use tauri::{
     menu::{Menu, MenuItem},
-    tray::TrayIconBuilder,
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     App, AppHandle, Manager, Runtime, WebviewWindow, WindowEvent,
 };
 
@@ -60,11 +60,35 @@ fn tray_menu_action(menu_id: &str) -> Option<TrayMenuAction> {
     }
 }
 
+fn should_show_main_window_from_tray_event(event: &TrayIconEvent) -> bool {
+    match event {
+        TrayIconEvent::Click {
+            button,
+            button_state,
+            ..
+        } => should_show_main_window_from_tray_click(*button, *button_state),
+        _ => false,
+    }
+}
+
+fn should_show_main_window_from_tray_click(
+    button: MouseButton,
+    button_state: MouseButtonState,
+) -> bool {
+    button == MouseButton::Left && button_state == MouseButtonState::Up
+}
+
 fn setup_system_tray(app: &mut App) -> tauri::Result<()> {
     let menu = build_tray_menu(app.handle())?;
+    let app_handle = app.handle().clone();
     let mut tray = TrayIconBuilder::with_id(TRAY_ID)
         .menu(&menu)
         .show_menu_on_left_click(false)
+        .on_tray_icon_event(move |_tray, event| {
+            if should_show_main_window_from_tray_event(&event) {
+                show_main_window(&app_handle);
+            }
+        })
         .tooltip("AI Session Migrator");
 
     if let Some(icon) = app.default_window_icon().cloned() {
@@ -281,5 +305,21 @@ mod tests {
         );
         assert_eq!(tray_menu_action("tray_quit_app"), Some(TrayMenuAction::QuitApp));
         assert_eq!(tray_menu_action("anything_else"), None);
+    }
+
+    #[test]
+    fn tray_left_click_release_shows_main_window() {
+        assert!(should_show_main_window_from_tray_click(
+            MouseButton::Left,
+            MouseButtonState::Up
+        ));
+        assert!(!should_show_main_window_from_tray_click(
+            MouseButton::Left,
+            MouseButtonState::Down
+        ));
+        assert!(!should_show_main_window_from_tray_click(
+            MouseButton::Right,
+            MouseButtonState::Up
+        ));
     }
 }

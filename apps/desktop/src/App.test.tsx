@@ -297,8 +297,12 @@ test("scan shows active sessions before archived sessions with lifecycle badges"
   const activeRow = await screen.findByRole("article", { name: "活跃 provider 会话" });
   const archivedRow = screen.getByRole("article", { name: "归档 provider 会话" });
 
+  expect(activeRow).toHaveClass("session-row-active");
+  expect(archivedRow).toHaveClass("session-row-archived");
   expect(within(activeRow).getByText("活跃")).toBeInTheDocument();
   expect(within(archivedRow).getByText("已归档")).toBeInTheDocument();
+  expect(within(archivedRow).getByRole("button", { name: "激活" })).not.toBeDisabled();
+  expect(within(archivedRow).getByRole("button", { name: "删除" })).not.toBeDisabled();
   expect(activeRow.compareDocumentPosition(archivedRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(screen.getByText("2 个可见，2 个已选")).toBeInTheDocument();
 });
