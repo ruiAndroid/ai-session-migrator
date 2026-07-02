@@ -32,6 +32,8 @@ const scanResponse: ScanResponse = {
         threadId: activeThreadId,
         shortId: "019eca3b",
         displayName: "活跃 provider 会话",
+        projectName: null,
+        projectPath: null,
         path: `${fixtureCodexHome}\\sessions\\rollout-a.jsonl`,
         fileProvider: "funai",
         configProvider: "yihubangg",
@@ -47,6 +49,8 @@ const scanResponse: ScanResponse = {
         threadId: archivedThreadId,
         shortId: "019ec94d",
         displayName: "归档 provider 会话",
+        projectName: null,
+        projectPath: null,
         path: `${fixtureCodexHome}\\archived_sessions\\rollout-b.jsonl`,
         fileProvider: "gmn",
         configProvider: "yihubangg",
@@ -305,6 +309,31 @@ test("scan shows active sessions before archived sessions with lifecycle badges"
   expect(within(archivedRow).getByRole("button", { name: "删除" })).not.toBeDisabled();
   expect(activeRow.compareDocumentPosition(archivedRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(screen.getByText("2 个可见，2 个已选")).toBeInTheDocument();
+});
+
+test("session item shows the owning project beside the lifecycle badge", async () => {
+  const api = fakeApi();
+  vi.mocked(api.scanCodexHome).mockResolvedValueOnce({
+    ...scanResponse,
+    dashboard: {
+      ...scanResponse.dashboard,
+      rows: [
+        {
+          ...scanResponse.dashboard.rows[0],
+          projectName: "fun-claw",
+          projectPath: "D:\\dev\\AI\\AIPro\\fun-claw"
+        },
+        scanResponse.dashboard.rows[1]
+      ]
+    }
+  } as ScanResponse);
+  const { user } = await renderWorkflow(api);
+
+  await user.click(screen.getByRole("button", { name: /扫描会话/ }));
+
+  const activeRow = await screen.findByRole("article", { name: scanResponse.dashboard.rows[0].displayName });
+  expect(within(activeRow).getByText("项目：fun-claw")).toHaveClass("project-badge");
+  expect(within(activeRow).getByText("活跃")).toHaveClass("lifecycle-badge");
 });
 
 test("session list separates time and actions columns", async () => {

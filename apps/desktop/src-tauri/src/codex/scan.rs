@@ -284,6 +284,8 @@ fn thread_row(
         thread_id: metadata.thread_id.clone(),
         short_id: metadata.thread_id.chars().take(8).collect(),
         display_name,
+        project_name: project_name_from_cwd(&metadata.cwd),
+        project_path: non_empty_project_path(&metadata.cwd),
         path: metadata.path.display().to_string(),
         file_provider: metadata.provider.clone(),
         config_provider,
@@ -299,6 +301,22 @@ fn thread_row(
         updated_at_ms: metadata.updated_at_ms,
         issue_codes,
     }
+}
+
+fn project_name_from_cwd(cwd: &str) -> Option<String> {
+    cwd.trim()
+        .trim_end_matches(['/', '\\'])
+        .split(['/', '\\'])
+        .filter(|part| !part.is_empty())
+        .next_back()
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(str::to_string)
+}
+
+fn non_empty_project_path(cwd: &str) -> Option<String> {
+    let trimmed = cwd.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
 fn lifecycle_rank(lifecycle: &ThreadLifecycle) -> u8 {
@@ -576,6 +594,35 @@ mod tests {
             response.dashboard.rows[0].display_name,
             "sqlite renamed title"
         );
+    }
+
+    #[test]
+    fn scan_reports_project_name_from_session_cwd() {
+        let temp = tempfile::tempdir().unwrap();
+        let codex = temp.path().join(".codex");
+        let thread_id = "019eee41-9343-7f30-971e-b01e55a058c8";
+        let state_db = codex.join("state_5.sqlite");
+        write_jsonl(
+            &codex.join("sessions/2026/06/22/rollout-a-019eee41-9343-7f30-971e-b01e55a058c8.jsonl"),
+            thread_id,
+            "funai",
+            false,
+            "project scoped title",
+        );
+        fs::write(codex.join("config.toml"), "model_provider = \"funai\"\n").unwrap();
+        fs::write(
+            codex.join("session_index.jsonl"),
+            format!("{{\"id\":\"{thread_id}\"}}\n"),
+        )
+        .unwrap();
+        init_state_db(&state_db);
+        insert_state_row(&state_db, thread_id, "funai", 0);
+
+        let response = scan_codex_home(&codex).unwrap();
+        let row = serde_json::to_value(&response.dashboard.rows[0]).unwrap();
+
+        assert_eq!(row["projectName"], "work");
+        assert_eq!(row["projectPath"], "D:\\work");
     }
 
     #[test]

@@ -26,6 +26,8 @@ pub struct ThreadRow {
     pub thread_id: String,
     pub short_id: String,
     pub display_name: String,
+    pub project_name: Option<String>,
+    pub project_path: Option<String>,
     pub path: String,
     pub file_provider: Option<String>,
     pub config_provider: Option<String>,

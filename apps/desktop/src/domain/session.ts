@@ -5,6 +5,8 @@ export type ThreadRow = {
   threadId: string;
   shortId: string;
   displayName: string;
+  projectName: string | null;
+  projectPath: string | null;
   path: string;
   fileProvider: string | null;
   configProvider: string | null;

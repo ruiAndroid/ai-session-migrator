@@ -883,6 +883,12 @@ function SessionItem({
           <div className="session-title-wrap">
             <strong>{row.displayName}</strong>
             <span className={`lifecycle-badge ${row.lifecycle}`}>{lifecycleLabel(row.lifecycle)}</span>
+            {row.projectName ? (
+              <span className="project-badge" title={row.projectPath ?? row.projectName}>
+                <FolderOpen aria-hidden="true" size={13} />
+                项目：{row.projectName}
+              </span>
+            ) : null}
           </div>
           <p>{issueSummary(row.issueCodes)}</p>
         </div>
@@ -1242,6 +1248,10 @@ function SessionDetailsDialog({
           <div>
             <dt>类型</dt>
             <dd>{lifecycleLabel(row.lifecycle)}</dd>
+          </div>
+          <div>
+            <dt>项目</dt>
+            <dd>{row.projectPath ?? row.projectName ?? "未知"}</dd>
           </div>
           <div>
             <dt>问题</dt>

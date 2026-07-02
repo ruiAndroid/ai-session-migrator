@@ -784,6 +784,12 @@ h3 {
   color: rgba(87, 83, 78, 0.58);
 }
 
+.session-row-archived .project-badge {
+  border-color: rgba(120, 113, 108, 0.16);
+  background: rgba(238, 237, 247, 0.62);
+  color: rgba(87, 83, 78, 0.66);
+}
+
 .session-row-archived .session-select span {
   border-color: rgba(120, 113, 108, 0.48);
   background: rgba(255, 255, 255, 0.72);
@@ -891,7 +897,8 @@ h3 {
   white-space: nowrap;
 }
 
-.lifecycle-badge {
+.lifecycle-badge,
+.project-badge {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
@@ -903,6 +910,21 @@ h3 {
   font-size: 12px;
   font-weight: 760;
   line-height: 1;
+}
+
+.project-badge {
+  max-width: 180px;
+  overflow: hidden;
+  border-color: rgba(109, 59, 215, 0.14);
+  background: rgba(233, 221, 255, 0.5);
+  color: #4c2c92;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-badge svg {
+  flex: 0 0 auto;
+  stroke-width: 2.2;
 }
 
 .lifecycle-badge::before {
