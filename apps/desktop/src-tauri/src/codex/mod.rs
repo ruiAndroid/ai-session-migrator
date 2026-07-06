@@ -1,5 +1,6 @@
 pub mod archive;
 pub mod backup;
+pub mod catalog_repair;
 pub mod deletion;
 pub mod error;
 pub mod metadata;
