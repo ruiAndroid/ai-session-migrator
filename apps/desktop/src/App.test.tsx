@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import App from "./App";
 import type { MigrationApi } from "./domain/migrationApi";
-import type { MigrationResult, ScanResponse, SessionTranscript } from "./domain/session";
+import type { CatalogRepairScanResponse, MigrationResult, ScanResponse, SessionTranscript } from "./domain/session";
 
 const fixtureCodexHome = "D:\\Codex\\fixture\\.codex";
 const activeThreadId = "019eca3b-941d-7340-9b14-328c635a6523";
@@ -131,6 +131,42 @@ const scanResponseAfterActivate: ScanResponse = {
   }
 };
 
+const catalogRepairScanResponse: CatalogRepairScanResponse = {
+  catalogDbPath: `${fixtureCodexHome}\\sqlite\\codex-dev.db`,
+  summary: {
+    totalThreads: 2,
+    missingCatalogEntries: 1,
+    selectedByDefault: 1,
+    archivedThreads: 1
+  },
+  rows: [
+    {
+      threadId: activeThreadId,
+      displayTitle: "活跃 provider 会话",
+      lifecycle: "active",
+      projectName: null,
+      projectPath: null,
+      path: `${fixtureCodexHome}\\sessions\\rollout-a.jsonl`,
+      fileProvider: "funai",
+      repairCodes: ["missing_catalog_entry"],
+      selectedByDefault: true,
+      updatedAtMs: 1781484460000
+    },
+    {
+      threadId: archivedThreadId,
+      displayTitle: "归档 provider 会话",
+      lifecycle: "archived",
+      projectName: null,
+      projectPath: null,
+      path: `${fixtureCodexHome}\\archived_sessions\\rollout-b.jsonl`,
+      fileProvider: "gmn",
+      repairCodes: ["missing_catalog_entry"],
+      selectedByDefault: false,
+      updatedAtMs: 1781484400000
+    }
+  ]
+};
+
 const activeTranscript: SessionTranscript = {
   threadId: activeThreadId,
   title: "活跃 provider 会话",
@@ -155,6 +191,7 @@ const activeTranscript: SessionTranscript = {
 function fakeApi(): MigrationApi {
   return {
     scanCodexHome: vi.fn().mockResolvedValue(scanResponse),
+    scanCodexCatalogRepair: vi.fn().mockResolvedValue(catalogRepairScanResponse),
     previewProviderMigration: vi.fn().mockResolvedValue({
       changedThreads: [activeThreadId],
       plannedRepairs: [
@@ -167,10 +204,31 @@ function fakeApi(): MigrationApi {
       backupDir: null,
       dryRun: true
     }),
+    previewCodexCatalogRepair: vi.fn().mockResolvedValue({
+      changedThreads: [activeThreadId],
+      plannedChanges: [
+        {
+          threadId: activeThreadId,
+          action: "insert_catalog_entry",
+          displayTitle: "活跃 provider 会话",
+          cwd: "D:\\work",
+          sourceKind: "vscode",
+          modelProvider: "funai"
+        }
+      ],
+      backupDir: null,
+      dryRun: true
+    }),
     applyProviderMigration: vi.fn().mockResolvedValue({
       changedThreads: [activeThreadId],
       plannedRepairs: [],
       backupDir: `${fixtureCodexHome}\\ai-session-migrator-backup-20260617-120000`,
+      dryRun: false
+    }),
+    applyCodexCatalogRepair: vi.fn().mockResolvedValue({
+      changedThreads: [activeThreadId],
+      plannedChanges: [],
+      backupDir: `${fixtureCodexHome}\\ai-session-migrator-backup-20260706-170000`,
       dryRun: false
     }),
     previewDeleteArchivedSessions: vi.fn().mockResolvedValue({
@@ -309,6 +367,14 @@ test("scan shows active sessions before archived sessions with lifecycle badges"
   expect(within(archivedRow).getByRole("button", { name: "删除" })).not.toBeDisabled();
   expect(activeRow.compareDocumentPosition(archivedRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(screen.getByText("2 个可见，2 个已选")).toBeInTheDocument();
+});
+
+test("shows codex catalog repair action after scan", async () => {
+  const { user } = await renderWorkflow();
+
+  await user.click(screen.getByRole("button", { name: /扫描会话/ }));
+
+  expect(await screen.findByRole("button", { name: /修复 Codex 可见索引/ })).toBeEnabled();
 });
 
 test("session item shows the owning project beside the lifecycle badge", async () => {

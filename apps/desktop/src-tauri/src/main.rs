@@ -4,7 +4,8 @@
 )]
 
 use ai_session_migrator::codex::{
-    self, ArchiveRequest, ArchiveResult, CommandError, DeleteArchivedRequest, DeleteArchivedResult,
+    self, ArchiveRequest, ArchiveResult, CatalogRepairRequest, CatalogRepairResult,
+    CatalogRepairScanResponse, CommandError, DeleteArchivedRequest, DeleteArchivedResult,
     MigrationRequest, MigrationResult, ProviderRestartRequest, ProviderRestartResult, ScanResponse,
     SessionTranscript, SessionTranscriptRequest,
 };
@@ -149,6 +150,13 @@ fn scan_codex_home(codex_home: String) -> std::result::Result<ScanResponse, Comm
 }
 
 #[tauri::command]
+fn scan_codex_catalog_repair(
+    codex_home: String,
+) -> std::result::Result<CatalogRepairScanResponse, CommandError> {
+    codex::scan_codex_catalog_repair(codex_home)
+}
+
+#[tauri::command]
 fn preview_provider_migration(
     request: MigrationRequest,
 ) -> std::result::Result<MigrationResult, CommandError> {
@@ -156,10 +164,24 @@ fn preview_provider_migration(
 }
 
 #[tauri::command]
+fn preview_codex_catalog_repair(
+    request: CatalogRepairRequest,
+) -> std::result::Result<CatalogRepairResult, CommandError> {
+    codex::preview_codex_catalog_repair(request)
+}
+
+#[tauri::command]
 fn apply_provider_migration(
     request: MigrationRequest,
 ) -> std::result::Result<MigrationResult, CommandError> {
     codex::apply_provider_migration(request)
+}
+
+#[tauri::command]
+fn apply_codex_catalog_repair(
+    request: CatalogRepairRequest,
+) -> std::result::Result<CatalogRepairResult, CommandError> {
+    codex::apply_codex_catalog_repair(request)
 }
 
 #[tauri::command]
@@ -262,8 +284,11 @@ fn main() {
             app_health,
             default_codex_home,
             scan_codex_home,
+            scan_codex_catalog_repair,
             preview_provider_migration,
+            preview_codex_catalog_repair,
             apply_provider_migration,
+            apply_codex_catalog_repair,
             preview_delete_archived_sessions,
             apply_delete_archived_sessions,
             apply_archive_sessions,

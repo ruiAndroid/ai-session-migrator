@@ -46,6 +46,32 @@ export type ScanResponse = {
   configProvider: string | null;
 };
 
+export type CatalogRepairRow = {
+  threadId: string;
+  displayTitle: string;
+  lifecycle: ThreadLifecycle;
+  projectName: string | null;
+  projectPath: string | null;
+  path: string;
+  fileProvider: string | null;
+  repairCodes: string[];
+  selectedByDefault: boolean;
+  updatedAtMs: number;
+};
+
+export type CatalogRepairSummary = {
+  totalThreads: number;
+  missingCatalogEntries: number;
+  selectedByDefault: number;
+  archivedThreads: number;
+};
+
+export type CatalogRepairScanResponse = {
+  rows: CatalogRepairRow[];
+  summary: CatalogRepairSummary;
+  catalogDbPath: string | null;
+};
+
 export type PlannedRepair = {
   threadId: string;
   code: string;
@@ -60,6 +86,11 @@ export type MigrationRequest = {
 };
 
 export type DeleteArchivedRequest = {
+  codexHome: string;
+  threadIds: string[];
+};
+
+export type CatalogRepairRequest = {
   codexHome: string;
   threadIds: string[];
 };
@@ -87,6 +118,22 @@ export type ArchiveResult = {
 
 export type DeleteArchivedResult = {
   deletedThreads: string[];
+  backupDir: string | null;
+  dryRun: boolean;
+};
+
+export type CatalogRepairChange = {
+  threadId: string;
+  action: string;
+  displayTitle: string;
+  cwd: string;
+  sourceKind: string;
+  modelProvider: string | null;
+};
+
+export type CatalogRepairResult = {
+  changedThreads: string[];
+  plannedChanges: CatalogRepairChange[];
   backupDir: string | null;
   dryRun: boolean;
 };

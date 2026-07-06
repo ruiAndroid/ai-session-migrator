@@ -13,6 +13,10 @@ pub mod transcript;
 #[cfg(test)]
 pub mod test_support;
 
+pub use catalog_repair::{
+    CatalogRepairChange, CatalogRepairRequest, CatalogRepairResult, CatalogRepairRow,
+    CatalogRepairScanResponse, CatalogRepairSummary,
+};
 pub use error::{CommandError, Result};
 pub use restart::{ProviderRestartRequest, ProviderRestartResult};
 
@@ -176,6 +180,10 @@ pub fn scan_codex_home(codex_home: String) -> Result<ScanResponse> {
     scan::scan_codex_home(std::path::Path::new(&codex_home))
 }
 
+pub fn scan_codex_catalog_repair(codex_home: String) -> Result<CatalogRepairScanResponse> {
+    catalog_repair::scan_codex_catalog_repair(std::path::Path::new(&codex_home))
+}
+
 pub fn default_codex_home() -> String {
     default_codex_home_from_env(|name| std::env::var_os(name))
         .display()
@@ -219,6 +227,16 @@ pub fn preview_provider_migration(request: MigrationRequest) -> Result<Migration
 
 pub fn apply_provider_migration(request: MigrationRequest) -> Result<MigrationResult> {
     migration::apply_provider_migration(request)
+}
+
+pub fn preview_codex_catalog_repair(
+    request: CatalogRepairRequest,
+) -> Result<CatalogRepairResult> {
+    catalog_repair::preview_codex_catalog_repair(request)
+}
+
+pub fn apply_codex_catalog_repair(request: CatalogRepairRequest) -> Result<CatalogRepairResult> {
+    catalog_repair::apply_codex_catalog_repair(request)
 }
 
 pub fn preview_delete_archived_sessions(

@@ -2,6 +2,9 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   ArchiveRequest,
   ArchiveResult,
+  CatalogRepairRequest,
+  CatalogRepairResult,
+  CatalogRepairScanResponse,
   DeleteArchivedRequest,
   DeleteArchivedResult,
   MigrationRequest,
@@ -15,8 +18,11 @@ import type {
 
 export type MigrationApi = {
   scanCodexHome(codexHome: string): Promise<ScanResponse>;
+  scanCodexCatalogRepair(codexHome: string): Promise<CatalogRepairScanResponse>;
   previewProviderMigration(request: MigrationRequest): Promise<MigrationResult>;
+  previewCodexCatalogRepair(request: CatalogRepairRequest): Promise<CatalogRepairResult>;
   applyProviderMigration(request: MigrationRequest): Promise<MigrationResult>;
+  applyCodexCatalogRepair(request: CatalogRepairRequest): Promise<CatalogRepairResult>;
   previewDeleteArchivedSessions(request: DeleteArchivedRequest): Promise<DeleteArchivedResult>;
   applyDeleteArchivedSessions(request: DeleteArchivedRequest): Promise<DeleteArchivedResult>;
   applyArchiveSessions(request: ArchiveRequest): Promise<ArchiveResult>;
@@ -29,11 +35,20 @@ export const tauriMigrationApi: MigrationApi = {
   scanCodexHome(codexHome) {
     return invoke<ScanResponse>("scan_codex_home", { codexHome });
   },
+  scanCodexCatalogRepair(codexHome) {
+    return invoke<CatalogRepairScanResponse>("scan_codex_catalog_repair", { codexHome });
+  },
   previewProviderMigration(request) {
     return invoke<MigrationResult>("preview_provider_migration", { request });
   },
+  previewCodexCatalogRepair(request) {
+    return invoke<CatalogRepairResult>("preview_codex_catalog_repair", { request });
+  },
   applyProviderMigration(request) {
     return invoke<MigrationResult>("apply_provider_migration", { request });
+  },
+  applyCodexCatalogRepair(request) {
+    return invoke<CatalogRepairResult>("apply_codex_catalog_repair", { request });
   },
   previewDeleteArchivedSessions(request) {
     return invoke<DeleteArchivedResult>("preview_delete_archived_sessions", { request });
