@@ -210,7 +210,7 @@ function fakeApi(): MigrationApi {
         {
           threadId: activeThreadId,
           action: "insert_catalog_entry",
-          displayTitle: "活跃 provider 会话",
+          displayTitle: "renamed title",
           cwd: "D:\\work",
           sourceKind: "vscode",
           modelProvider: "funai"
@@ -375,6 +375,46 @@ test("shows codex catalog repair action after scan", async () => {
   await user.click(screen.getByRole("button", { name: /扫描会话/ }));
 
   expect(await screen.findByRole("button", { name: /修复 Codex 可见索引/ })).toBeEnabled();
+});
+
+test("preview and apply catalog repair use selected default rows", async () => {
+  const api = fakeApi();
+  const { user } = await renderWorkflow(api);
+
+  await user.click(screen.getByRole("button", { name: /扫描会话/ }));
+  await user.click(await screen.findByRole("button", { name: /预览修复/ }));
+
+  await waitFor(() => {
+    expect(api.previewCodexCatalogRepair).toHaveBeenCalledWith({
+      codexHome: fixtureCodexHome,
+      threadIds: [activeThreadId]
+    });
+  });
+  expect(screen.getByText("renamed title")).toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: /确认修复/ }));
+
+  await waitFor(() => {
+    expect(api.applyCodexCatalogRepair).toHaveBeenCalledWith({
+      codexHome: fixtureCodexHome,
+      threadIds: [activeThreadId]
+    });
+  });
+});
+
+test("catalog repair process-running error tells user to close Codex", async () => {
+  const api = fakeApi();
+  vi.mocked(api.applyCodexCatalogRepair).mockRejectedValueOnce({
+    code: "codex_process_running",
+    message: "Close Codex Desktop and Codex CLI before repairing the visible index."
+  });
+  const { user } = await renderWorkflow(api);
+
+  await user.click(screen.getByRole("button", { name: /扫描会话/ }));
+  await user.click(await screen.findByRole("button", { name: /预览修复/ }));
+  await user.click(await screen.findByRole("button", { name: /确认修复/ }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("请先退出 Codex");
 });
 
 test("session item shows the owning project beside the lifecycle badge", async () => {

@@ -624,6 +624,220 @@ h3 {
   line-height: 1;
 }
 
+.catalog-repair-panel {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.52);
+  box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.catalog-repair-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.catalog-repair-heading h3 {
+  margin: 2px 0 6px;
+  color: var(--text);
+  font-size: 19px;
+}
+
+.catalog-repair-heading p:last-child {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 14px;
+}
+
+.catalog-repair-heading button {
+  flex: 0 0 auto;
+  min-width: 186px;
+}
+
+.catalog-repair-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.catalog-repair-stats div {
+  display: grid;
+  gap: 4px;
+  min-height: 58px;
+  padding: 10px 12px;
+  border: 1px solid rgba(223, 192, 181, 0.32);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.44);
+}
+
+.catalog-repair-stats span {
+  color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.catalog-repair-stats strong {
+  color: var(--text);
+  font-size: 22px;
+  line-height: 1;
+}
+
+.catalog-db-path {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  color: var(--text-soft);
+  font-size: 13px;
+}
+
+.catalog-db-path code {
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.catalog-repair-list {
+  display: grid;
+  gap: 8px;
+}
+
+.catalog-repair-row {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  min-height: 58px;
+  padding: 10px 12px;
+  border: 1px solid rgba(238, 237, 247, 0.9);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.catalog-repair-row input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--primary);
+}
+
+.catalog-repair-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.catalog-repair-copy strong,
+.catalog-repair-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.catalog-repair-copy strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.catalog-repair-copy small {
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.catalog-repair-codes {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.catalog-repair-codes span {
+  border: 1px solid rgba(255, 126, 71, 0.22);
+  border-radius: 999px;
+  padding: 5px 8px;
+  background: rgba(255, 219, 206, 0.42);
+  color: var(--primary-dark);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.catalog-repair-empty {
+  display: grid;
+  min-height: 74px;
+  place-items: center;
+  border: 1px dashed rgba(139, 114, 104, 0.34);
+  border-radius: 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.catalog-repair-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.catalog-repair-result {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(21, 128, 61, 0.16);
+  border-radius: 14px;
+  background: rgba(240, 253, 244, 0.56);
+}
+
+.catalog-repair-result h4 {
+  margin: 0 0 4px;
+  color: var(--text);
+  font-size: 15px;
+}
+
+.catalog-repair-result p {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 13px;
+}
+
+.catalog-change-list {
+  display: grid;
+  gap: 8px;
+}
+
+.catalog-change-list article {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.catalog-change-list strong,
+.catalog-change-list span,
+.catalog-change-list small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.catalog-change-list strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.catalog-change-list span,
+.catalog-change-list small {
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
 .session-panel {
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.76);

@@ -17,7 +17,8 @@ import {
   RefreshCw,
   Search,
   ShieldCheck,
-  Trash2
+  Trash2,
+  Wrench
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fallbackCodexHome, resolveDesktopCodexHome } from "./domain/defaultCodexHome";
@@ -26,6 +27,10 @@ import { tauriDesktopActions } from "./domain/desktopActions";
 import type { MigrationApi } from "./domain/migrationApi";
 import { tauriMigrationApi } from "./domain/migrationApi";
 import type {
+  CatalogRepairRequest,
+  CatalogRepairResult,
+  CatalogRepairRow,
+  CatalogRepairScanResponse,
   CommandError,
   MigrationRequest,
   MigrationResult,
@@ -50,7 +55,17 @@ type AppProps = {
   startupSplashDurationMs?: number;
 };
 
-type LoadingState = "idle" | "scan" | "preview" | "apply" | "delete" | "archive" | "activate" | "restart";
+type LoadingState =
+  | "idle"
+  | "scan"
+  | "preview"
+  | "apply"
+  | "catalogPreview"
+  | "catalogApply"
+  | "delete"
+  | "archive"
+  | "activate"
+  | "restart";
 
 type PendingLifecycleAction = {
   action: "archive" | "activate";
@@ -93,6 +108,10 @@ export default function App({
   const [transcriptError, setTranscriptError] = useState<DisplayError | null>(null);
   const [previewResult, setPreviewResult] = useState<MigrationResult | null>(null);
   const [previewRequestKey, setPreviewRequestKey] = useState("");
+  const [catalogRepair, setCatalogRepair] = useState<CatalogRepairScanResponse | null>(null);
+  const [catalogRepairSelectedIds, setCatalogRepairSelectedIds] = useState<string[]>([]);
+  const [catalogRepairPreview, setCatalogRepairPreview] = useState<CatalogRepairResult | null>(null);
+  const [catalogRepairPreviewRequestKey, setCatalogRepairPreviewRequestKey] = useState("");
   const [completionNotice, setCompletionNotice] = useState<CompletionNotice | null>(null);
   const [loading, setLoading] = useState<LoadingState>("idle");
   const [error, setError] = useState<DisplayError | null>(null);
@@ -150,6 +169,29 @@ export default function App({
   const canPreview = currentMigrationRequest !== null && loading === "idle";
   const canApply = canPreview && previewResult !== null && previewRequestKey === currentMigrationRequestKey;
   const canDeleteArchived = scanResponse !== null && deleteArchivedThreadIds.length > 0 && loading === "idle";
+  const catalogRepairableThreadIds = useMemo(
+    () => new Set((catalogRepair?.rows ?? []).filter(hasMissingCatalogEntry).map((row) => row.threadId)),
+    [catalogRepair]
+  );
+  const catalogRepairThreadIds = useMemo(
+    () => catalogRepairSelectedIds.filter((threadId) => catalogRepairableThreadIds.has(threadId)),
+    [catalogRepairSelectedIds, catalogRepairableThreadIds]
+  );
+  const currentCatalogRepairRequest = useMemo<CatalogRepairRequest | null>(() => {
+    if (catalogRepairThreadIds.length === 0) {
+      return null;
+    }
+    return {
+      codexHome: codexHome.trim(),
+      threadIds: catalogRepairThreadIds
+    };
+  }, [catalogRepairThreadIds, codexHome]);
+  const currentCatalogRepairRequestKey = currentCatalogRepairRequest ? requestKey(currentCatalogRepairRequest) : "";
+  const canPreviewCatalogRepair = currentCatalogRepairRequest !== null && loading === "idle";
+  const canApplyCatalogRepair =
+    canPreviewCatalogRepair &&
+    catalogRepairPreview !== null &&
+    catalogRepairPreviewRequestKey === currentCatalogRepairRequestKey;
 
   useEffect(() => {
     let cancelled = false;
@@ -181,8 +223,11 @@ export default function App({
     clearMigrationContext();
     try {
       const response = await migrationApi.scanCodexHome(codexHome.trim());
+      const catalogResponse = await migrationApi.scanCodexCatalogRepair(codexHome.trim());
       const defaultSourceProvider = defaultSourceForScan(response);
       setScanResponse(response);
+      setCatalogRepair(catalogResponse);
+      setCatalogRepairSelectedIds(defaultCatalogRepairThreadIds(catalogResponse));
       setSourceProvider(defaultSourceProvider);
       const firstTarget =
         response.providerOptions.currentConfigProvider ??
@@ -193,6 +238,52 @@ export default function App({
       setSelectedIds(threadIdsForSource(response.dashboard.rows, defaultSourceProvider));
       setDetailsRow(null);
       closeTranscript();
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setLoading("idle");
+    }
+  }
+
+  async function handleCatalogRepairPreview() {
+    if (!currentCatalogRepairRequest) {
+      return;
+    }
+    const request = currentCatalogRepairRequest;
+    const requestKeyForRun = currentCatalogRepairRequestKey;
+    setLoading("catalogPreview");
+    setError(null);
+    setCatalogRepairPreview(null);
+    setCatalogRepairPreviewRequestKey("");
+    setCompletionNotice(null);
+    try {
+      const result = await migrationApi.previewCodexCatalogRepair(request);
+      setCatalogRepairPreview(result);
+      setCatalogRepairPreviewRequestKey(requestKeyForRun);
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setLoading("idle");
+    }
+  }
+
+  async function handleCatalogRepairApply() {
+    if (!currentCatalogRepairRequest || !canApplyCatalogRepair) {
+      return;
+    }
+    const request = currentCatalogRepairRequest;
+    setLoading("catalogApply");
+    setError(null);
+    setCompletionNotice(null);
+    try {
+      const result = await migrationApi.applyCodexCatalogRepair(request);
+      setCatalogRepairPreview(null);
+      setCatalogRepairPreviewRequestKey("");
+      setCompletionNotice({
+        message: `已修复 Codex 可见索引 ${result.changedThreads.length} 条会话`,
+        backupDir: result.backupDir
+      });
+      await refreshCatalogRepairScan();
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -486,6 +577,10 @@ export default function App({
     setPendingLifecycleAction(null);
     setConfirmingRestart(false);
     setScanResponse(null);
+    setCatalogRepair(null);
+    setCatalogRepairSelectedIds([]);
+    setCatalogRepairPreview(null);
+    setCatalogRepairPreviewRequestKey("");
     setSourceProvider(ALL_SOURCES);
     setTargetChoice("");
     setCustomTargetProvider("");
@@ -504,6 +599,17 @@ export default function App({
     setConfirmingRestart(false);
     setPreviewResult(null);
     setPreviewRequestKey("");
+    setCatalogRepairPreview(null);
+    setCatalogRepairPreviewRequestKey("");
+    setCompletionNotice(null);
+  }
+
+  function toggleCatalogRepairSession(threadId: string) {
+    setCatalogRepairSelectedIds((current) =>
+      current.includes(threadId) ? current.filter((item) => item !== threadId) : [...current, threadId]
+    );
+    setCatalogRepairPreview(null);
+    setCatalogRepairPreviewRequestKey("");
     setCompletionNotice(null);
   }
 
@@ -516,6 +622,12 @@ export default function App({
   async function refreshScanAfterLifecycleChange(changedThreads: string[]) {
     const refreshed = await migrationApi.scanCodexHome(codexHome.trim());
     applyRefreshedScan(refreshed, sourceProvider, changedThreads);
+  }
+
+  async function refreshCatalogRepairScan() {
+    const refreshed = await migrationApi.scanCodexCatalogRepair(codexHome.trim());
+    setCatalogRepair(refreshed);
+    setCatalogRepairSelectedIds(defaultCatalogRepairThreadIds(refreshed));
   }
 
   function applyRefreshedScan(refreshed: ScanResponse, nextSourceProvider: string, changedThreads: string[]) {
@@ -697,6 +809,21 @@ export default function App({
           <Metric label="将迁移" value={migrationThreadIds.length} />
           <Metric label="可见会话" value={visibleRows.length} />
         </section>
+
+        {catalogRepair ? (
+          <CatalogRepairPanel
+            response={catalogRepair}
+            selectedIds={catalogRepairSelectedIds}
+            selectedRepairableCount={catalogRepairThreadIds.length}
+            preview={catalogRepairPreview}
+            disabled={loading !== "idle"}
+            canPreview={canPreviewCatalogRepair}
+            canApply={canApplyCatalogRepair}
+            onToggleSelected={toggleCatalogRepairSession}
+            onPreview={handleCatalogRepairPreview}
+            onApply={handleCatalogRepairApply}
+          />
+        ) : null}
 
         {previewResult ? <ResultPanel title={`将更新 ${previewResult.changedThreads.length} 个会话`} result={previewResult} /> : null}
 
@@ -930,6 +1057,154 @@ function SessionItem({
   );
 }
 
+function CatalogRepairPanel({
+  response,
+  selectedIds,
+  selectedRepairableCount,
+  preview,
+  disabled,
+  canPreview,
+  canApply,
+  onToggleSelected,
+  onPreview,
+  onApply
+}: {
+  response: CatalogRepairScanResponse;
+  selectedIds: string[];
+  selectedRepairableCount: number;
+  preview: CatalogRepairResult | null;
+  disabled: boolean;
+  canPreview: boolean;
+  canApply: boolean;
+  onToggleSelected: (threadId: string) => void;
+  onPreview: () => void;
+  onApply: () => void;
+}) {
+  const repairRows = response.rows.filter((row) => row.repairCodes.length > 0);
+
+  return (
+    <section className="catalog-repair-panel" aria-label="Codex 可见索引修复">
+      <div className="catalog-repair-heading">
+        <div>
+          <p className="eyebrow">Codex Catalog</p>
+          <h3>Codex 可见索引</h3>
+          <p>
+            缺失 catalog {response.summary.missingCatalogEntries} 条，默认选择{" "}
+            {response.summary.selectedByDefault} 条活跃会话。
+          </p>
+        </div>
+        <button className="secondary-button" type="button" disabled={!canPreview} onClick={onPreview}>
+          <Wrench aria-hidden="true" size={17} />
+          修复 Codex 可见索引
+        </button>
+      </div>
+
+      <div className="catalog-repair-stats" aria-label="Codex catalog 修复摘要">
+        <div>
+          <span>总会话</span>
+          <strong>{response.summary.totalThreads}</strong>
+        </div>
+        <div>
+          <span>缺失 catalog</span>
+          <strong>{response.summary.missingCatalogEntries}</strong>
+        </div>
+        <div>
+          <span>将修复</span>
+          <strong>{selectedRepairableCount}</strong>
+        </div>
+        <div>
+          <span>归档会话</span>
+          <strong>{response.summary.archivedThreads}</strong>
+        </div>
+      </div>
+
+      <div className="catalog-db-path">
+        <span>catalog DB</span>
+        <code>{response.catalogDbPath ?? "未发现 codex-dev.db"}</code>
+      </div>
+
+      <div className="catalog-repair-list">
+        {repairRows.length > 0 ? (
+          repairRows.map((row) => {
+            const repairable = hasMissingCatalogEntry(row);
+            return (
+              <label className="catalog-repair-row" key={row.threadId}>
+                <input
+                  aria-label={`选择可见索引修复：${row.displayTitle}`}
+                  type="checkbox"
+                  checked={selectedIds.includes(row.threadId)}
+                  disabled={disabled || !repairable}
+                  onChange={() => onToggleSelected(row.threadId)}
+                />
+                <span className="catalog-repair-copy">
+                  <strong>索引：{row.displayTitle}</strong>
+                  <small>
+                    {lifecycleLabel(row.lifecycle)}
+                    {row.projectName ? ` / 项目：${row.projectName}` : ""}
+                    {row.fileProvider ? ` / ${row.fileProvider}` : ""}
+                    {" / "}
+                    {formatDate(row.updatedAtMs)}
+                  </small>
+                </span>
+                <span className="catalog-repair-codes">
+                  {row.repairCodes.map((code) => (
+                    <span key={code}>{catalogRepairCodeLabel(code)}</span>
+                  ))}
+                </span>
+              </label>
+            );
+          })
+        ) : (
+          <div className="catalog-repair-empty">当前没有需要修复的 Codex 可见索引。</div>
+        )}
+      </div>
+
+      <div className="catalog-repair-actions">
+        <button className="secondary-button" type="button" disabled={!canPreview} onClick={onPreview}>
+          预览修复
+        </button>
+        <button className="primary-button" type="button" disabled={!canApply} onClick={onApply}>
+          <ShieldCheck aria-hidden="true" size={17} />
+          确认修复
+        </button>
+      </div>
+
+      {preview ? <CatalogRepairResultPanel result={preview} /> : null}
+    </section>
+  );
+}
+
+function CatalogRepairResultPanel({ result }: { result: CatalogRepairResult }) {
+  return (
+    <section className="catalog-repair-result" aria-label={`将修复 ${result.changedThreads.length} 条可见索引`}>
+      <div>
+        <h4>将写入 {result.changedThreads.length} 条 catalog 记录</h4>
+        <p>{result.dryRun ? "dry-run 预览未写入数据库。" : "已写入 Codex catalog。"}</p>
+      </div>
+      {result.plannedChanges.length > 0 ? (
+        <div className="catalog-change-list">
+          {result.plannedChanges.map((change) => (
+            <article key={`${change.threadId}-${change.action}`}>
+              <strong>{change.displayTitle}</strong>
+              <span>{change.cwd}</span>
+              <small>
+                {change.sourceKind}
+                {change.modelProvider ? ` / ${change.modelProvider}` : ""}
+              </small>
+            </article>
+          ))}
+        </div>
+      ) : null}
+      {result.backupDir ? (
+        <div className="result-line">
+          <strong>备份目录</strong>
+          <span>{result.backupDir}</span>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function ResultPanel({ title, result }: { title: string; result: MigrationResult }) {
   return (
     <section className="result-panel" aria-label={title}>
@@ -1123,6 +1398,16 @@ const loadingCopy: Record<Exclude<LoadingState, "idle">, { title: string; body: 
     title: "正在迁移",
     body: "正在创建备份并写入会话",
     note: "请保持应用打开，完成后会自动刷新列表。"
+  },
+  catalogPreview: {
+    title: "正在预览修复",
+    body: "正在检查 Codex 可见索引修复计划",
+    note: "这一步不会写入 Codex catalog。"
+  },
+  catalogApply: {
+    title: "正在修复索引",
+    body: "正在创建备份并写入 Codex 可见索引",
+    note: "请保持 Codex 退出，完成后会刷新修复状态。"
   },
   delete: {
     title: "正在删除",
@@ -1501,6 +1786,14 @@ function threadIdsForSource(rows: ThreadRow[], sourceProvider: string) {
     .map((row) => row.threadId);
 }
 
+function defaultCatalogRepairThreadIds(response: CatalogRepairScanResponse) {
+  return response.rows.filter((row) => row.selectedByDefault && hasMissingCatalogEntry(row)).map((row) => row.threadId);
+}
+
+function hasMissingCatalogEntry(row: CatalogRepairRow) {
+  return row.repairCodes.includes("missing_catalog_entry");
+}
+
 function compareSessionRows(left: ThreadRow, right: ThreadRow) {
   return (
     lifecycleRank(left) - lifecycleRank(right) ||
@@ -1566,8 +1859,18 @@ function formatDate(value: number) {
   }).format(new Date(value));
 }
 
-function requestKey(request: MigrationRequest) {
+function requestKey(request: MigrationRequest | CatalogRepairRequest) {
   return JSON.stringify(request);
+}
+
+function catalogRepairCodeLabel(code: string) {
+  const labels: Record<string, string> = {
+    missing_catalog_entry: "缺失 catalog",
+    catalog_db_missing: "缺失 codex-dev.db",
+    catalog_cwd_mismatch: "项目路径不一致",
+    catalog_title_stale: "标题待补齐"
+  };
+  return labels[code] ?? code;
 }
 
 function countIssues(rows: ThreadRow[]) {
@@ -1599,7 +1902,12 @@ function localizedCommandErrorMessage(error: CommandError) {
     no_sessions_found: "没有找到 Codex 会话，请确认 sessions 或 archived_sessions 目录里存在 rollout-*.jsonl 文件。",
     target_provider_required: "请选择目标 provider。",
     no_session_selected: "请至少选择一个要处理的会话。",
+    no_threads_selected: "请至少选择一个要修复的会话。",
     selected_thread_missing: "选中的会话已经不存在，请重新扫描。",
+    codex_process_running: "请先退出 Codex，再修复 Codex 可见索引。",
+    catalog_db_missing: "找不到 Codex 可见索引数据库，请先启动一次 Codex 让它生成 catalog。",
+    catalog_schema_unsupported: "Codex 可见索引数据库结构暂不支持自动修复。",
+    catalog_insert_failed: "写入 Codex 可见索引失败，请确认 Codex 已退出后重试。",
     delete_requires_archived_sessions: "只能删除已归档会话；活跃会话不会被删除。",
     archive_requires_active_sessions: "只能归档活跃会话。",
     activate_requires_archived_sessions: "只能激活已归档会话。",

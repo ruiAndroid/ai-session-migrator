@@ -16,6 +16,8 @@
 
 ## Session Notes
 
+- 2026-07-06: Codex 可见索引修复已落地为独立于 provider 迁移的桌面流程：扫描后展示 `~/.codex/sqlite/codex-dev.db.local_thread_catalog` 缺失项，默认只选择活跃且缺失 catalog 的会话，归档会话可见但不默认选中；预览显示将插入的 catalog 标题/cwd/source/provider，确认修复前必须已预览同一选择。apply 后端仍负责检测 Codex/Codex Desktop 进程、事务写入 SQLite、备份 `codex-dev.db`/WAL/SHM、state DB 和 `session_index.jsonl`，且不移动、删除或改写 JSONL。
+
 - 2026-07-06: Codex Desktop 左侧项目会话列表可能与真实会话文件不一致，尤其在清理工具误删/影响本地 cache 后。ai-session-migrator 的后续修复能力应按三层模型处理：真实会话源是 `~/.codex/sessions/**/*.jsonl` / `archived_sessions`，旧/主线程状态在 `~/.codex/state_5.sqlite` 与 `~/.codex/sqlite/state_5.sqlite` 的 `threads`，Codex Desktop 左栏可见 catalog 在 `~/.codex/sqlite/codex-dev.db.local_thread_catalog`。修复方向固定为新增“修复 Codex 可见索引”：默认只补齐缺失 catalog 记录，不移动/删除/改写 JSONL，不清空重建 catalog；apply 前必须检测 Codex 进程，运行中拒绝写入，并备份相关 sqlite/WAL/SHM 与 `session_index.jsonl`。
 
 - 2026-06-26: `AGENTS.md` and `MEMORY.md` were missing in this subproject, and `~/.codex/templates` was also missing, so minimal inferred files were created.
