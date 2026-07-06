@@ -6,6 +6,7 @@ apps/desktop/src-tauri/target/
 .vite/
 .turbo/
 .superpowers/
+.worktrees/
 .env
 .env.*
 !.env.example
