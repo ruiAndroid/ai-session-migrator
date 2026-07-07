@@ -65,4 +65,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: artifacts/AI-Session-Migrator-macOS-universal-unsigned.dmg
-          body_path: docs/release-notes-v0.1.0.md
+          body_path: docs/release-notes-${{ github.ref_name }}.md

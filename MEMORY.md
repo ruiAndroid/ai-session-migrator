@@ -16,6 +16,8 @@
 
 ## Session Notes
 
+- 2026-07-07: GitHub release workflow now reads `docs/release-notes-${{ github.ref_name }}.md` for tag-triggered releases; before pushing a new `vX.Y.Z` tag, bump package/Tauri/Cargo versions and add the matching `docs/release-notes-vX.Y.Z.md` so GitHub Actions can publish the release body and artifacts consistently.
+
 - 2026-07-07: `apps/desktop/src/styles.test.ts` 这类直接读取 CSS 文本的测试在 Windows 工作区会遇到 CRLF 行尾；如果 selector 断言包含换行，先把读取内容标准化为 LF，避免把真实样式存在误判成规则缺失。
 
 - 2026-07-06: `rollout ... does not start with session metadata` 不能只按 state/catalog 路径修。对 `019f32e8-178a-7b01-9a43-61e5a75d73ae` 做临时 Codex Home 对照时，`session_meta` 首行合法、最短 prefix 可被旧后端读取，但完整 `cli_version=0.142.5` rollout 会被 bundled `codex-cli 0.140.0-alpha.2` 拒绝；删除 JSONL 各行 `payload.internal_chat_message_metadata_passthrough` 后同一会话可进入 `thread.started`。修复器新增 `rollout_internal_metadata_passthrough`：扫描显示“会话兼容性待修复”，apply 在备份 JSONL 后只剥离该隐藏字段，保留正文、工具调用、时间戳、provider 和可见性元数据；真实写入仍要求 Codex 已退出。
