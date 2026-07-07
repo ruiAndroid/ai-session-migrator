@@ -1,4 +1,5 @@
 use crate::codex::metadata::SessionMetadata;
+use crate::codex::paths::{normalize_windows_extended_path, visible_path_string};
 use crate::codex::{CommandError, Result, ThreadLifecycle};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::path::{Path, PathBuf};
@@ -10,6 +11,8 @@ pub struct StateEntry {
     pub provider: Option<String>,
     pub archived: Option<i32>,
     pub title: Option<String>,
+    pub rollout_path: Option<String>,
+    pub cwd: Option<String>,
 }
 
 pub fn state_dbs(codex_home: &Path) -> Vec<PathBuf> {
@@ -33,28 +36,34 @@ pub fn state_entry(db: &Path, thread_id: &str) -> StateEntry {
             provider: None,
             archived: None,
             title: None,
+            rollout_path: None,
+            cwd: None,
         };
     };
     let row = connection
         .query_row(
-            "select model_provider, archived, title from threads where id=?1",
+            "select model_provider, archived, title, rollout_path, cwd from threads where id=?1",
             [thread_id],
             |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, i32>(1)?,
                     row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
                 ))
             },
         )
         .optional();
     match row {
-        Ok(Some((provider, archived, title))) => StateEntry {
+        Ok(Some((provider, archived, title, rollout_path, cwd))) => StateEntry {
             db_path,
             exists: true,
             provider: Some(provider),
             archived: Some(archived),
             title: (!title.trim().is_empty()).then_some(title),
+            rollout_path: (!rollout_path.trim().is_empty()).then_some(rollout_path),
+            cwd: (!cwd.trim().is_empty()).then_some(cwd),
         },
         _ => StateEntry {
             db_path,
@@ -62,6 +71,8 @@ pub fn state_entry(db: &Path, thread_id: &str) -> StateEntry {
             provider: None,
             archived: None,
             title: None,
+            rollout_path: None,
+            cwd: None,
         },
     }
 }
@@ -71,6 +82,21 @@ pub fn upsert_state_entries(
     items: &[(SessionMetadata, ThreadLifecycle)],
     provider: &str,
 ) -> Result<()> {
+    upsert_state_entries_with_provider(codex_home, items, Some(provider))
+}
+
+pub fn upsert_state_entries_from_metadata(
+    codex_home: &Path,
+    items: &[(SessionMetadata, ThreadLifecycle)],
+) -> Result<()> {
+    upsert_state_entries_with_provider(codex_home, items, None)
+}
+
+fn upsert_state_entries_with_provider(
+    codex_home: &Path,
+    items: &[(SessionMetadata, ThreadLifecycle)],
+    provider_override: Option<&str>,
+) -> Result<()> {
     for db in state_dbs(codex_home) {
         let connection = Connection::open(&db)
             .map_err(|error| CommandError::new("sqlite_open_failed", error.to_string()))?;
@@ -79,6 +105,12 @@ pub fn upsert_state_entries(
             .map_err(|error| CommandError::new("sqlite_busy_timeout_failed", error.to_string()))?;
         for (metadata, lifecycle) in items {
             let archived = archived_value(lifecycle);
+            let rollout_path = visible_path_string(&metadata.path);
+            let cwd = normalize_windows_extended_path(&metadata.cwd);
+            let provider = provider_override
+                .or(metadata.provider.as_deref())
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or("unknown");
             let exists: i64 = connection
                 .query_row(
                     "select count(*) from threads where id=?1",
@@ -92,8 +124,9 @@ pub fn upsert_state_entries(
                         "
                         update threads
                         set model_provider=?1, archived=?2, archived_at=CASE WHEN ?2 = 0 THEN NULL ELSE archived_at END, title=?3,
-                            first_user_message=?4, preview=?5, updated_at=?6, updated_at_ms=?7
-                        where id=?8
+                            first_user_message=?4, preview=?5, updated_at=?6, updated_at_ms=?7,
+                            rollout_path=?8, cwd=?9
+                        where id=?10
                         ",
                         params![
                             provider,
@@ -103,6 +136,8 @@ pub fn upsert_state_entries(
                             &metadata.preview,
                             metadata.updated_at_ms / 1000,
                             metadata.updated_at_ms,
+                            &rollout_path,
+                            &cwd,
                             &metadata.thread_id,
                         ],
                     )
@@ -128,12 +163,12 @@ pub fn upsert_state_entries(
                         ",
                         params![
                             &metadata.thread_id,
-                            metadata.path.display().to_string(),
+                            &rollout_path,
                             metadata.created_at_ms / 1000,
                             metadata.updated_at_ms / 1000,
                             &metadata.source,
                             provider,
-                            &metadata.cwd,
+                            &cwd,
                             &metadata.title,
                             "{\"type\":\"disabled\"}",
                             "never",
@@ -198,7 +233,7 @@ pub fn update_archive_state(
                     params![
                         archived,
                         archived_at,
-                        rollout_path.display().to_string(),
+                        visible_path_string(rollout_path),
                         thread_id
                     ],
                 )
@@ -212,5 +247,109 @@ fn archived_value(lifecycle: &ThreadLifecycle) -> i32 {
     match lifecycle {
         ThreadLifecycle::Active => 0,
         ThreadLifecycle::Archived => 1,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::codex::test_support::{init_state_db, insert_state_row_with_title};
+    use rusqlite::Connection;
+
+    fn metadata_with_extended_paths(thread_id: &str) -> SessionMetadata {
+        SessionMetadata {
+            thread_id: thread_id.to_string(),
+            provider: Some("funai".to_string()),
+            created_at_ms: 1_783_265_504_000,
+            updated_at_ms: 1_783_275_940_813,
+            cwd: r"\\?\D:\dev\AI\AIPro\fun-claw".to_string(),
+            source: "vscode".to_string(),
+            cli_version: "0.140.0".to_string(),
+            thread_source: Some("user".to_string()),
+            title: "slack1".to_string(),
+            first_user_message: "first message".to_string(),
+            preview: "first message".to_string(),
+            path: PathBuf::from(r"\\?\C:\Users\jianrui\.codex\sessions\2026\07\05\rollout-a.jsonl"),
+        }
+    }
+
+    #[test]
+    fn upsert_state_entries_normalizes_extended_windows_paths_when_inserting() {
+        let temp = tempfile::tempdir().unwrap();
+        let codex = temp.path().join(".codex");
+        let state_db = codex.join("state_5.sqlite");
+        let thread_id = "019f32e8-178a-7b01-9a43-61e5a75d73ae";
+        init_state_db(&state_db);
+
+        upsert_state_entries_from_metadata(
+            &codex,
+            &[(
+                metadata_with_extended_paths(thread_id),
+                ThreadLifecycle::Active,
+            )],
+        )
+        .unwrap();
+
+        let connection = Connection::open(state_db).unwrap();
+        let row: (String, String) = connection
+            .query_row(
+                "select rollout_path, cwd from threads where id=?1",
+                [thread_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            row,
+            (
+                r"C:\Users\jianrui\.codex\sessions\2026\07\05\rollout-a.jsonl".to_string(),
+                r"D:\dev\AI\AIPro\fun-claw".to_string(),
+            )
+        );
+    }
+
+    #[test]
+    fn upsert_state_entries_corrects_existing_rollout_path_and_cwd() {
+        let temp = tempfile::tempdir().unwrap();
+        let codex = temp.path().join(".codex");
+        let state_db = codex.join("state_5.sqlite");
+        let thread_id = "019f32e8-178a-7b01-9a43-61e5a75d73ae";
+        init_state_db(&state_db);
+        insert_state_row_with_title(&state_db, thread_id, "funai", 0, "old title");
+        let connection = Connection::open(&state_db).unwrap();
+        connection
+            .execute(
+                "update threads set rollout_path=?1, cwd=?2 where id=?3",
+                (
+                    r"\\?\C:\Users\jianrui\.codex\sessions\bad.jsonl",
+                    r"\\?\D:\dev\AI\AIPro\bad",
+                    thread_id,
+                ),
+            )
+            .unwrap();
+
+        upsert_state_entries_from_metadata(
+            &codex,
+            &[(
+                metadata_with_extended_paths(thread_id),
+                ThreadLifecycle::Active,
+            )],
+        )
+        .unwrap();
+
+        let row: (String, String, String) = connection
+            .query_row(
+                "select rollout_path, cwd, title from threads where id=?1",
+                [thread_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            row,
+            (
+                r"C:\Users\jianrui\.codex\sessions\2026\07\05\rollout-a.jsonl".to_string(),
+                r"D:\dev\AI\AIPro\fun-claw".to_string(),
+                "slack1".to_string(),
+            )
+        );
     }
 }

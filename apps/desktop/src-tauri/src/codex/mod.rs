@@ -5,6 +5,7 @@ pub mod deletion;
 pub mod error;
 pub mod metadata;
 pub mod migration;
+pub mod paths;
 pub mod restart;
 pub mod scan;
 pub mod sqlite;
@@ -229,9 +230,7 @@ pub fn apply_provider_migration(request: MigrationRequest) -> Result<MigrationRe
     migration::apply_provider_migration(request)
 }
 
-pub fn preview_codex_catalog_repair(
-    request: CatalogRepairRequest,
-) -> Result<CatalogRepairResult> {
+pub fn preview_codex_catalog_repair(request: CatalogRepairRequest) -> Result<CatalogRepairResult> {
     catalog_repair::preview_codex_catalog_repair(request)
 }
 

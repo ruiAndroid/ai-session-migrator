@@ -67,6 +67,8 @@ type LoadingState =
   | "activate"
   | "restart";
 
+type WorkspaceTab = "migration" | "catalogRepair";
+
 type PendingLifecycleAction = {
   action: "archive" | "activate";
   row: ThreadRow;
@@ -100,6 +102,7 @@ export default function App({
   const [sourceProvider, setSourceProvider] = useState(ALL_SOURCES);
   const [targetChoice, setTargetChoice] = useState("");
   const [customTargetProvider, setCustomTargetProvider] = useState("");
+  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<WorkspaceTab>("migration");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [detailsRow, setDetailsRow] = useState<ThreadRow | null>(null);
   const [transcriptRow, setTranscriptRow] = useState<ThreadRow | null>(null);
@@ -170,7 +173,7 @@ export default function App({
   const canApply = canPreview && previewResult !== null && previewRequestKey === currentMigrationRequestKey;
   const canDeleteArchived = scanResponse !== null && deleteArchivedThreadIds.length > 0 && loading === "idle";
   const catalogRepairableThreadIds = useMemo(
-    () => new Set((catalogRepair?.rows ?? []).filter(hasMissingCatalogEntry).map((row) => row.threadId)),
+    () => new Set((catalogRepair?.rows ?? []).filter(hasRepairableCatalogIssue).map((row) => row.threadId)),
     [catalogRepair]
   );
   const catalogRepairThreadIds = useMemo(
@@ -192,6 +195,25 @@ export default function App({
     canPreviewCatalogRepair &&
     catalogRepairPreview !== null &&
     catalogRepairPreviewRequestKey === currentCatalogRepairRequestKey;
+  const effectiveWorkspaceTab: WorkspaceTab = scanResponse ? activeWorkspaceTab : "migration";
+  const isCatalogRepairTab = effectiveWorkspaceTab === "catalogRepair";
+  const catalogRepairIssueCount = useMemo(
+    () => (catalogRepair?.rows ?? []).filter(hasRepairableCatalogIssue).length,
+    [catalogRepair]
+  );
+  const workspaceTitle = isCatalogRepairTab
+    ? "会话修复"
+    : summaryTitle(scanResponse, migrationThreadIds.length);
+  const workspaceSubtitle = isCatalogRepairTab
+    ? "Repair Codex Session Visibility"
+    : englishSummaryTitle(scanResponse, migrationThreadIds.length);
+  const workspaceMutedText = isCatalogRepairTab
+    ? catalogRepair
+      ? `已发现 ${catalogRepairIssueCount} 条可修复会话可见性问题，默认选择 ${catalogRepair.summary.selectedByDefault} 条活跃会话。`
+      : "扫描后查看 Codex Desktop 会话可见性状态。"
+    : scanResponse
+      ? `已发现 ${scanResponse.dashboard.totalThreads} 个会话，其中 ${scanResponse.dashboard.problemThreads} 个需要处理。`
+      : "先扫描本地 Codex 目录，确认后再迁移。";
 
   useEffect(() => {
     let cancelled = false;
@@ -280,7 +302,7 @@ export default function App({
       setCatalogRepairPreview(null);
       setCatalogRepairPreviewRequestKey("");
       setCompletionNotice({
-        message: `已修复 Codex 可见索引 ${result.changedThreads.length} 条会话`,
+        message: `已修复 ${result.changedThreads.length} 条 Codex 会话可见性记录`,
         backupDir: result.backupDir
       });
       await refreshCatalogRepairScan();
@@ -773,23 +795,21 @@ export default function App({
       <section className="workspace">
         <header className="summary">
           <div>
-            <h2>{summaryTitle(scanResponse, migrationThreadIds.length)}</h2>
-            <p className="summary-subtitle">{englishSummaryTitle(scanResponse, migrationThreadIds.length)}</p>
-            <p className="muted">
-              {scanResponse
-                ? `已发现 ${scanResponse.dashboard.totalThreads} 个会话，其中 ${scanResponse.dashboard.problemThreads} 个需要处理。`
-                : "先扫描本地 Codex 目录，确认后再迁移。"}
-            </p>
+            <h2>{workspaceTitle}</h2>
+            <p className="summary-subtitle">{workspaceSubtitle}</p>
+            <p className="muted">{workspaceMutedText}</p>
           </div>
-          <div className="summary-actions">
-            <button className="secondary-button" type="button" disabled={!canPreview} onClick={handlePreview}>
-              {loading === "preview" ? "正在预览" : "预览迁移"}
-            </button>
-            <button className="primary-button" type="button" disabled={!canApply} onClick={handleApply}>
-              <ShieldCheck aria-hidden="true" size={17} />
-              {loading === "apply" ? "正在迁移" : "确认迁移"}
-            </button>
-          </div>
+          {isCatalogRepairTab ? null : (
+            <div className="summary-actions">
+              <button className="secondary-button" type="button" disabled={!canPreview} onClick={handlePreview}>
+                {loading === "preview" ? "正在预览" : "预览迁移"}
+              </button>
+              <button className="primary-button" type="button" disabled={!canApply} onClick={handleApply}>
+                <ShieldCheck aria-hidden="true" size={17} />
+                {loading === "apply" ? "正在迁移" : "确认迁移"}
+              </button>
+            </div>
+          )}
         </header>
 
         {error ? <ErrorPanel error={error} /> : null}
@@ -803,31 +823,58 @@ export default function App({
           />
         ) : null}
 
-        <section className="metrics" aria-label="扫描摘要">
-          <Metric label="总会话" value={scanResponse?.dashboard.totalThreads ?? 0} />
-          <Metric label="需处理" value={scanResponse?.dashboard.problemThreads ?? 0} />
-          <Metric label="将迁移" value={migrationThreadIds.length} />
-          <Metric label="可见会话" value={visibleRows.length} />
-        </section>
-
-        {catalogRepair ? (
-          <CatalogRepairPanel
-            response={catalogRepair}
-            selectedIds={catalogRepairSelectedIds}
-            selectedRepairableCount={catalogRepairThreadIds.length}
-            preview={catalogRepairPreview}
-            disabled={loading !== "idle"}
-            canPreview={canPreviewCatalogRepair}
-            canApply={canApplyCatalogRepair}
-            onToggleSelected={toggleCatalogRepairSession}
-            onPreview={handleCatalogRepairPreview}
-            onApply={handleCatalogRepairApply}
+        {scanResponse ? (
+          <WorkspaceTabs
+            activeTab={effectiveWorkspaceTab}
+            migrationCount={migrationThreadIds.length}
+            repairCount={catalogRepairIssueCount}
+            onChange={setActiveWorkspaceTab}
           />
         ) : null}
 
-        {previewResult ? <ResultPanel title={`将更新 ${previewResult.changedThreads.length} 个会话`} result={previewResult} /> : null}
+        {isCatalogRepairTab ? (
+          <section
+            id="workspace-panel-catalog-repair"
+            className="workspace-tab-panel"
+            role="tabpanel"
+            aria-labelledby="workspace-tab-catalog-repair"
+          >
+            {catalogRepair ? (
+              <CatalogRepairPanel
+                response={catalogRepair}
+                selectedIds={catalogRepairSelectedIds}
+                selectedRepairableCount={catalogRepairThreadIds.length}
+                preview={catalogRepairPreview}
+                disabled={loading !== "idle"}
+                canPreview={canPreviewCatalogRepair}
+                canApply={canApplyCatalogRepair}
+                onToggleSelected={toggleCatalogRepairSession}
+                onPreview={handleCatalogRepairPreview}
+                onApply={handleCatalogRepairApply}
+              />
+            ) : (
+              <div className="empty-state">扫描后查看 Codex 会话修复项。</div>
+            )}
+          </section>
+        ) : (
+          <section
+            id="workspace-panel-migration"
+            className="workspace-tab-panel"
+            role="tabpanel"
+            aria-labelledby="workspace-tab-migration"
+          >
+            <section className="metrics" aria-label="扫描摘要">
+              <Metric label="总会话" value={scanResponse?.dashboard.totalThreads ?? 0} />
+              <Metric label="需处理" value={scanResponse?.dashboard.problemThreads ?? 0} />
+              <Metric label="将迁移" value={migrationThreadIds.length} />
+              <Metric label="可见会话" value={visibleRows.length} />
+            </section>
 
-        <section className="session-panel">
+            {previewResult ? (
+              <ResultPanel title={`将更新 ${previewResult.changedThreads.length} 个会话`} result={previewResult} />
+            ) : null}
+
+            <section className="session-panel">
           <div className="panel-heading">
             <div className="bulk-actions" aria-label="批量选择会话">
               <button
@@ -893,7 +940,9 @@ export default function App({
           ) : (
             <div className="empty-state">还没有扫描结果。</div>
           )}
-        </section>
+            </section>
+          </section>
+        )}
       </section>
 
       {confirmingApply ? (
@@ -954,6 +1003,47 @@ export default function App({
         <SplashScreen durationMs={startupSplashDurationMs} onComplete={() => setStartupSplashVisible(false)} />
       ) : null}
     </main>
+  );
+}
+
+function WorkspaceTabs({
+  activeTab,
+  migrationCount,
+  repairCount,
+  onChange
+}: {
+  activeTab: WorkspaceTab;
+  migrationCount: number;
+  repairCount: number;
+  onChange: (tab: WorkspaceTab) => void;
+}) {
+  return (
+    <nav className="workspace-tabs" role="tablist" aria-label="工作区视图">
+      <button
+        id="workspace-tab-migration"
+        className={activeTab === "migration" ? "workspace-tab active" : "workspace-tab"}
+        type="button"
+        role="tab"
+        aria-selected={activeTab === "migration"}
+        aria-controls="workspace-panel-migration"
+        onClick={() => onChange("migration")}
+      >
+        <span>会话迁移</span>
+        <small>{migrationCount} 个将迁移</small>
+      </button>
+      <button
+        id="workspace-tab-catalog-repair"
+        className={activeTab === "catalogRepair" ? "workspace-tab active" : "workspace-tab"}
+        type="button"
+        role="tab"
+        aria-selected={activeTab === "catalogRepair"}
+        aria-controls="workspace-panel-catalog-repair"
+        onClick={() => onChange("catalogRepair")}
+      >
+        <span>会话修复</span>
+        {repairCount > 0 ? <strong className="workspace-tab-badge">{repairCount}</strong> : null}
+      </button>
+    </nav>
   );
 }
 
@@ -1081,21 +1171,26 @@ function CatalogRepairPanel({
   onApply: () => void;
 }) {
   const repairRows = response.rows.filter((row) => row.repairCodes.length > 0);
+  const rolloutCompatibilityIssues = repairRows.filter((row) =>
+    row.repairCodes.includes("rollout_internal_metadata_passthrough")
+  ).length;
 
   return (
-    <section className="catalog-repair-panel" aria-label="Codex 可见索引修复">
+    <section className="catalog-repair-panel" aria-label="修复 Codex 会话可见性">
       <div className="catalog-repair-heading">
         <div>
-          <p className="eyebrow">Codex Catalog</p>
-          <h3>Codex 可见索引</h3>
+          <p className="eyebrow">Codex Visibility</p>
+          <h3>修复 Codex 会话可见性</h3>
           <p>
-            缺失 catalog {response.summary.missingCatalogEntries} 条，默认选择{" "}
+            补齐 Codex 左栏可见性元数据：缺失 catalog {response.summary.missingCatalogEntries} 条，缺失
+            session_index {response.summary.missingSessionIndexEntries} 条，state 待修复{" "}
+            {response.summary.stateMetadataIssues} 条，会话兼容性 {rolloutCompatibilityIssues} 条，默认选择{" "}
             {response.summary.selectedByDefault} 条活跃会话。
           </p>
         </div>
         <button className="secondary-button" type="button" disabled={!canPreview} onClick={onPreview}>
           <Wrench aria-hidden="true" size={17} />
-          修复 Codex 可见索引
+          生成修复预览
         </button>
       </div>
 
@@ -1107,6 +1202,18 @@ function CatalogRepairPanel({
         <div>
           <span>缺失 catalog</span>
           <strong>{response.summary.missingCatalogEntries}</strong>
+        </div>
+        <div>
+          <span>缺失 index</span>
+          <strong>{response.summary.missingSessionIndexEntries}</strong>
+        </div>
+        <div>
+          <span>state 待修复</span>
+          <strong>{response.summary.stateMetadataIssues}</strong>
+        </div>
+        <div>
+          <span>兼容性</span>
+          <strong>{rolloutCompatibilityIssues}</strong>
         </div>
         <div>
           <span>将修复</span>
@@ -1126,18 +1233,18 @@ function CatalogRepairPanel({
       <div className="catalog-repair-list">
         {repairRows.length > 0 ? (
           repairRows.map((row) => {
-            const repairable = hasMissingCatalogEntry(row);
+            const repairable = hasRepairableCatalogIssue(row);
             return (
               <label className="catalog-repair-row" key={row.threadId}>
                 <input
-                  aria-label={`选择可见索引修复：${row.displayTitle}`}
+                  aria-label={`选择会话修复：${row.displayTitle}`}
                   type="checkbox"
                   checked={selectedIds.includes(row.threadId)}
                   disabled={disabled || !repairable}
                   onChange={() => onToggleSelected(row.threadId)}
                 />
                 <span className="catalog-repair-copy">
-                  <strong>索引：{row.displayTitle}</strong>
+                  <strong>会话：{row.displayTitle}</strong>
                   <small>
                     {lifecycleLabel(row.lifecycle)}
                     {row.projectName ? ` / 项目：${row.projectName}` : ""}
@@ -1155,17 +1262,17 @@ function CatalogRepairPanel({
             );
           })
         ) : (
-          <div className="catalog-repair-empty">当前没有需要修复的 Codex 可见索引。</div>
+          <div className="catalog-repair-empty">当前没有需要修复的 Codex 会话可见性问题。</div>
         )}
       </div>
 
       <div className="catalog-repair-actions">
         <button className="secondary-button" type="button" disabled={!canPreview} onClick={onPreview}>
-          预览修复
+          预览会话修复
         </button>
         <button className="primary-button" type="button" disabled={!canApply} onClick={onApply}>
           <ShieldCheck aria-hidden="true" size={17} />
-          确认修复
+          确认修复会话
         </button>
       </div>
 
@@ -1176,10 +1283,10 @@ function CatalogRepairPanel({
 
 function CatalogRepairResultPanel({ result }: { result: CatalogRepairResult }) {
   return (
-    <section className="catalog-repair-result" aria-label={`将修复 ${result.changedThreads.length} 条可见索引`}>
+    <section className="catalog-repair-result" aria-label={`将修复 ${result.changedThreads.length} 条会话可见性记录`}>
       <div>
-        <h4>将写入 {result.changedThreads.length} 条 catalog 记录</h4>
-        <p>{result.dryRun ? "dry-run 预览未写入数据库。" : "已写入 Codex catalog。"}</p>
+        <h4>将修复 {result.changedThreads.length} 条会话可见性记录</h4>
+        <p>{result.dryRun ? "dry-run 预览未写入数据库。" : "已写入 Codex 会话可见性元数据。"}</p>
       </div>
       {result.plannedChanges.length > 0 ? (
         <div className="catalog-change-list">
@@ -1401,12 +1508,12 @@ const loadingCopy: Record<Exclude<LoadingState, "idle">, { title: string; body: 
   },
   catalogPreview: {
     title: "正在预览修复",
-    body: "正在检查 Codex 可见索引修复计划",
-    note: "这一步不会写入 Codex catalog。"
+    body: "正在检查 Codex 会话可见性修复计划",
+    note: "这一步不会写入 Codex 会话可见性元数据。"
   },
   catalogApply: {
-    title: "正在修复索引",
-    body: "正在创建备份并写入 Codex 可见索引",
+    title: "正在修复会话",
+    body: "正在创建备份并写入 Codex 会话可见性元数据",
     note: "请保持 Codex 退出，完成后会刷新修复状态。"
   },
   delete: {
@@ -1787,11 +1894,22 @@ function threadIdsForSource(rows: ThreadRow[], sourceProvider: string) {
 }
 
 function defaultCatalogRepairThreadIds(response: CatalogRepairScanResponse) {
-  return response.rows.filter((row) => row.selectedByDefault && hasMissingCatalogEntry(row)).map((row) => row.threadId);
+  return response.rows.filter((row) => row.selectedByDefault && hasRepairableCatalogIssue(row)).map((row) => row.threadId);
 }
 
-function hasMissingCatalogEntry(row: CatalogRepairRow) {
-  return row.repairCodes.includes("missing_catalog_entry");
+function hasRepairableCatalogIssue(row: CatalogRepairRow) {
+  return row.repairCodes.some((code) =>
+    [
+      "missing_catalog_entry",
+      "catalog_cwd_mismatch",
+      "catalog_title_stale",
+      "missing_session_index",
+      "missing_state_entry",
+      "state_rollout_path_mismatch",
+      "state_cwd_mismatch",
+      "rollout_internal_metadata_passthrough"
+    ].includes(code)
+  );
 }
 
 function compareSessionRows(left: ThreadRow, right: ThreadRow) {
@@ -1868,7 +1986,12 @@ function catalogRepairCodeLabel(code: string) {
     missing_catalog_entry: "缺失 catalog",
     catalog_db_missing: "缺失 codex-dev.db",
     catalog_cwd_mismatch: "项目路径不一致",
-    catalog_title_stale: "标题待补齐"
+    catalog_title_stale: "标题待补齐",
+    missing_session_index: "缺失 session_index",
+    missing_state_entry: "缺失 state 记录",
+    state_rollout_path_mismatch: "state 路径待修复",
+    state_cwd_mismatch: "state 项目路径待修复",
+    rollout_internal_metadata_passthrough: "会话兼容性待修复"
   };
   return labels[code] ?? code;
 }
@@ -1904,10 +2027,11 @@ function localizedCommandErrorMessage(error: CommandError) {
     no_session_selected: "请至少选择一个要处理的会话。",
     no_threads_selected: "请至少选择一个要修复的会话。",
     selected_thread_missing: "选中的会话已经不存在，请重新扫描。",
-    codex_process_running: "请先退出 Codex，再修复 Codex 可见索引。",
-    catalog_db_missing: "找不到 Codex 可见索引数据库，请先启动一次 Codex 让它生成 catalog。",
-    catalog_schema_unsupported: "Codex 可见索引数据库结构暂不支持自动修复。",
-    catalog_insert_failed: "写入 Codex 可见索引失败，请确认 Codex 已退出后重试。",
+    codex_process_running: "请先退出 Codex，再修复 Codex 会话可见性。",
+    catalog_db_missing: "找不到 Codex 会话可见性数据库，请先启动一次 Codex 让它生成 catalog。",
+    catalog_schema_unsupported: "Codex 会话可见性数据库结构暂不支持自动修复。",
+    catalog_insert_failed: "写入 Codex 会话可见性元数据失败，请确认 Codex 已退出后重试。",
+    catalog_update_failed: "更新 Codex 会话可见性元数据失败，请确认 Codex 已退出后重试。",
     delete_requires_archived_sessions: "只能删除已归档会话；活跃会话不会被删除。",
     archive_requires_active_sessions: "只能归档活跃会话。",
     activate_requires_archived_sessions: "只能激活已归档会话。",

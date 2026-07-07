@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
-const css = readFileSync(join(currentDir, "styles.css"), "utf8");
+const css = readFileSync(join(currentDir, "styles.css"), "utf8").replace(/\r\n?/g, "\n");
 
 function cssRule(selector: string) {
   const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

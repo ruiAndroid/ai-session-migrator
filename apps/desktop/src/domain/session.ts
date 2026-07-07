@@ -62,6 +62,8 @@ export type CatalogRepairRow = {
 export type CatalogRepairSummary = {
   totalThreads: number;
   missingCatalogEntries: number;
+  missingSessionIndexEntries: number;
+  stateMetadataIssues: number;
   selectedByDefault: number;
   archivedThreads: number;
 };

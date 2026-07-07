@@ -267,7 +267,8 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if matches!(event, WindowEvent::CloseRequested { .. }) && window.label() == MAIN_WINDOW_LABEL
+            if matches!(event, WindowEvent::CloseRequested { .. })
+                && window.label() == MAIN_WINDOW_LABEL
             {
                 if let WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
@@ -328,7 +329,10 @@ mod tests {
             tray_menu_action("tray_hide_to_tray"),
             Some(TrayMenuAction::HideToTray)
         );
-        assert_eq!(tray_menu_action("tray_quit_app"), Some(TrayMenuAction::QuitApp));
+        assert_eq!(
+            tray_menu_action("tray_quit_app"),
+            Some(TrayMenuAction::QuitApp)
+        );
         assert_eq!(tray_menu_action("anything_else"), None);
     }
 

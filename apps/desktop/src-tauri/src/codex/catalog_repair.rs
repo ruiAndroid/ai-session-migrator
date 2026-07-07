@@ -1,16 +1,21 @@
 use crate::codex::backup::create_backup_dir;
 use crate::codex::metadata::{metadata_from_bytes, SessionMetadata};
+use crate::codex::paths::{normalize_windows_extended_path, visible_path_string};
 use crate::codex::scan::session_files;
-use crate::codex::sqlite::{state_dbs, state_entry};
+use crate::codex::sqlite::{state_dbs, state_entry, upsert_state_entries_from_metadata};
 use crate::codex::{CommandError, Result, ThreadLifecycle};
 use rusqlite::{params, Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::collections::BTreeMap;
-use std::fs;
+use serde_json::{json, Value};
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
+
+const ROLLOUT_INTERNAL_METADATA_CODE: &str = "rollout_internal_metadata_passthrough";
+const ROLLOUT_INTERNAL_METADATA_KEY: &str = "internal_chat_message_metadata_passthrough";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -32,6 +37,8 @@ pub struct CatalogRepairRow {
 pub struct CatalogRepairSummary {
     pub total_threads: usize,
     pub missing_catalog_entries: usize,
+    pub missing_session_index_entries: usize,
+    pub state_metadata_issues: usize,
     pub selected_by_default: usize,
     pub archived_threads: usize,
 }
@@ -80,20 +87,24 @@ struct CatalogEntry {
 #[derive(Debug, Clone)]
 struct CatalogRepairCandidate {
     metadata: SessionMetadata,
+    lifecycle: ThreadLifecycle,
     display_title: String,
     source_created_at: f64,
     source_updated_at: f64,
+    repair_codes: Vec<String>,
 }
 
 pub fn scan_codex_catalog_repair(codex_home: &Path) -> Result<CatalogRepairScanResponse> {
     validate_codex_home(codex_home)?;
 
     let index_titles = index_titles(codex_home)?;
+    let index_ids = session_index_ids(codex_home)?;
     let catalog_db = codex_home.join("sqlite/codex-dev.db");
     let catalog_entries = read_catalog_entries(&catalog_db)?;
     let catalog_db_path = catalog_db
         .exists()
         .then(|| catalog_db.display().to_string());
+    let state_db_paths = state_dbs(codex_home);
     let files = session_files(codex_home)?;
     if files.is_empty() {
         return Err(CommandError::new(
@@ -110,36 +121,30 @@ pub fn scan_codex_catalog_repair(codex_home: &Path) -> Result<CatalogRepairScanR
         let raw = fs::read(&file.path)
             .map_err(|error| CommandError::io("read session", file.path.display(), error))?;
         let metadata = metadata_from_bytes(&raw, &file.path)?;
+        let has_rollout_internal_passthrough =
+            rollout_has_internal_metadata_passthrough(&raw, &file.path)?;
         let state_title = first_state_title(codex_home, &metadata.thread_id);
         let display_title = display_title(&metadata, &index_titles, state_title.as_deref());
-        let mut repair_codes = Vec::new();
-        if !catalog_db.exists() {
-            repair_codes.push("catalog_db_missing".to_string());
-        } else if let Some(entry) = catalog_entries.get(&metadata.thread_id) {
-            if entry.cwd.as_deref().unwrap_or_default() != metadata.cwd {
-                repair_codes.push("catalog_cwd_mismatch".to_string());
-            }
-            if entry.display_title.as_deref().unwrap_or_default().trim().is_empty()
-                && !display_title.trim().is_empty()
-            {
-                repair_codes.push("catalog_title_stale".to_string());
-            }
-        } else {
-            repair_codes.push("missing_catalog_entry".to_string());
-        }
-        repair_codes.sort();
-        repair_codes.dedup();
-        let selected_by_default = file.lifecycle == ThreadLifecycle::Active
-            && repair_codes
-                .iter()
-                .any(|code| code == "missing_catalog_entry");
+        let repair_codes = repair_codes_for_metadata(
+            &metadata,
+            &display_title,
+            &catalog_db,
+            &catalog_entries,
+            &index_ids,
+            &state_db_paths,
+            &file.lifecycle,
+            has_rollout_internal_passthrough,
+        );
+        let selected_by_default = catalog_db.exists()
+            && file.lifecycle == ThreadLifecycle::Active
+            && repair_codes.iter().any(|code| is_repairable_code(code));
         rows.push(CatalogRepairRow {
             thread_id: metadata.thread_id.clone(),
             display_title,
             lifecycle: file.lifecycle,
             project_name: project_name_from_cwd(&metadata.cwd),
             project_path: non_empty_project_path(&metadata.cwd),
-            path: metadata.path.display().to_string(),
+            path: visible_path_string(&metadata.path),
             file_provider: metadata.provider,
             repair_codes,
             selected_by_default,
@@ -165,6 +170,27 @@ pub fn scan_codex_catalog_repair(codex_home: &Path) -> Result<CatalogRepairScanR
                     .any(|code| code == "missing_catalog_entry")
             })
             .count(),
+        missing_session_index_entries: rows
+            .iter()
+            .filter(|row| {
+                row.repair_codes
+                    .iter()
+                    .any(|code| code == "missing_session_index")
+            })
+            .count(),
+        state_metadata_issues: rows
+            .iter()
+            .filter(|row| {
+                row.repair_codes.iter().any(|code| {
+                    matches!(
+                        code.as_str(),
+                        "missing_state_entry"
+                            | "state_rollout_path_mismatch"
+                            | "state_cwd_mismatch"
+                    )
+                })
+            })
+            .count(),
         selected_by_default: rows.iter().filter(|row| row.selected_by_default).count(),
         archived_threads: rows
             .iter()
@@ -179,11 +205,9 @@ pub fn scan_codex_catalog_repair(codex_home: &Path) -> Result<CatalogRepairScanR
     })
 }
 
-pub fn preview_codex_catalog_repair(
-    request: CatalogRepairRequest,
-) -> Result<CatalogRepairResult> {
+pub fn preview_codex_catalog_repair(request: CatalogRepairRequest) -> Result<CatalogRepairResult> {
     let codex_home = PathBuf::from(&request.codex_home);
-    let candidates = selected_missing_catalog_candidates(&codex_home, &request.thread_ids)?;
+    let candidates = selected_catalog_repair_candidates(&codex_home, &request.thread_ids)?;
     Ok(CatalogRepairResult {
         changed_threads: candidates
             .iter()
@@ -216,7 +240,7 @@ fn apply_codex_catalog_repair_with_process_checker(
         ));
     }
     let codex_home = PathBuf::from(&request.codex_home);
-    let candidates = selected_missing_catalog_candidates(&codex_home, &request.thread_ids)?;
+    let candidates = selected_catalog_repair_candidates(&codex_home, &request.thread_ids)?;
     let changed_threads: Vec<String> = candidates
         .iter()
         .map(|candidate| candidate.metadata.thread_id.clone())
@@ -231,10 +255,30 @@ fn apply_codex_catalog_repair_with_process_checker(
         });
     }
 
-    let backup_dir = create_backup_dir(&codex_home, &backup_inputs(&codex_home))?;
+    let backup_dir = create_backup_dir(&codex_home, &backup_inputs(&codex_home, &candidates))?;
+    strip_rollout_internal_metadata_passthrough_for_candidates(&candidates).map_err(|error| {
+        CommandError::post_backup(
+            backup_dir.display(),
+            "repair rollout compatibility metadata",
+            error,
+        )
+    })?;
     write_catalog_entries(&codex_home, &candidates).map_err(|error| {
         CommandError::post_backup(backup_dir.display(), "update codex catalog", error)
     })?;
+    ensure_session_index_entries(&codex_home, &candidates).map_err(|error| {
+        CommandError::post_backup(backup_dir.display(), "update session index", error)
+    })?;
+    let state_items = state_repair_items(&candidates);
+    if !state_items.is_empty() {
+        upsert_state_entries_from_metadata(&codex_home, &state_items).map_err(|error| {
+            CommandError::post_backup(
+                backup_dir.display(),
+                "update sqlite visibility metadata",
+                error,
+            )
+        })?;
+    }
 
     Ok(CatalogRepairResult {
         changed_threads,
@@ -244,7 +288,7 @@ fn apply_codex_catalog_repair_with_process_checker(
     })
 }
 
-fn selected_missing_catalog_candidates(
+fn selected_catalog_repair_candidates(
     codex_home: &Path,
     thread_ids: &[String],
 ) -> Result<Vec<CatalogRepairCandidate>> {
@@ -259,13 +303,18 @@ fn selected_missing_catalog_candidates(
     if !catalog_db.exists() {
         return Err(CommandError::new(
             "catalog_db_missing",
-            format!("Codex catalog database does not exist: {}", catalog_db.display()),
+            format!(
+                "Codex catalog database does not exist: {}",
+                catalog_db.display()
+            ),
         ));
     }
     let selected: std::collections::BTreeSet<&str> =
         thread_ids.iter().map(String::as_str).collect();
     let index_titles = index_titles(codex_home)?;
+    let index_ids = session_index_ids(codex_home)?;
     let catalog_entries = read_catalog_entries(&catalog_db)?;
+    let state_db_paths = state_dbs(codex_home);
     let mut found = std::collections::BTreeSet::new();
     let mut candidates = Vec::new();
 
@@ -276,17 +325,31 @@ fn selected_missing_catalog_candidates(
         if !selected.contains(metadata.thread_id.as_str()) {
             continue;
         }
+        let has_rollout_internal_passthrough =
+            rollout_has_internal_metadata_passthrough(&raw, &file.path)?;
         found.insert(metadata.thread_id.clone());
-        if catalog_entries.contains_key(&metadata.thread_id) {
-            continue;
-        }
         let state_title = first_state_title(codex_home, &metadata.thread_id);
         let display_title = display_title(&metadata, &index_titles, state_title.as_deref());
+        let repair_codes = repair_codes_for_metadata(
+            &metadata,
+            &display_title,
+            &catalog_db,
+            &catalog_entries,
+            &index_ids,
+            &state_db_paths,
+            &file.lifecycle,
+            has_rollout_internal_passthrough,
+        );
+        if !repair_codes.iter().any(|code| is_repairable_code(code)) {
+            continue;
+        }
         candidates.push(CatalogRepairCandidate {
+            lifecycle: file.lifecycle,
             source_created_at: seconds_from_ms(metadata.created_at_ms),
             source_updated_at: seconds_from_ms(metadata.updated_at_ms),
             metadata,
             display_title,
+            repair_codes,
         });
     }
 
@@ -304,13 +367,61 @@ fn selected_missing_catalog_candidates(
 fn catalog_repair_changes(candidates: &[CatalogRepairCandidate]) -> Vec<CatalogRepairChange> {
     candidates
         .iter()
-        .map(|candidate| CatalogRepairChange {
-            thread_id: candidate.metadata.thread_id.clone(),
-            action: "insert_catalog_entry".to_string(),
-            display_title: candidate.display_title.clone(),
-            cwd: candidate.metadata.cwd.clone(),
-            source_kind: candidate.metadata.source.clone(),
-            model_provider: candidate.metadata.provider.clone(),
+        .flat_map(|candidate| {
+            let mut actions = Vec::new();
+            if candidate
+                .repair_codes
+                .iter()
+                .any(|code| code == "missing_catalog_entry")
+            {
+                actions.push("insert_catalog_entry");
+            }
+            if candidate.repair_codes.iter().any(|code| {
+                matches!(
+                    code.as_str(),
+                    "catalog_cwd_mismatch" | "catalog_title_stale"
+                )
+            }) {
+                actions.push("update_catalog_entry");
+            }
+            if candidate
+                .repair_codes
+                .iter()
+                .any(|code| code == "missing_session_index")
+            {
+                actions.push("append_session_index_entry");
+            }
+            if candidate
+                .repair_codes
+                .iter()
+                .any(|code| code == "missing_state_entry")
+            {
+                actions.push("upsert_state_entry");
+            }
+            if candidate.repair_codes.iter().any(|code| {
+                matches!(
+                    code.as_str(),
+                    "state_rollout_path_mismatch" | "state_cwd_mismatch"
+                )
+            }) && !actions.contains(&"upsert_state_entry")
+            {
+                actions.push("upsert_state_entry");
+            }
+            if candidate
+                .repair_codes
+                .iter()
+                .any(|code| code == ROLLOUT_INTERNAL_METADATA_CODE)
+            {
+                actions.push("strip_rollout_internal_metadata_passthrough");
+            }
+            actions.into_iter().map(|action| CatalogRepairChange {
+                thread_id: candidate.metadata.thread_id.clone(),
+                action: action.to_string(),
+                display_title: candidate.display_title.clone(),
+                cwd: normalize_windows_extended_path(&candidate.metadata.cwd),
+                source_kind: candidate.metadata.source.clone(),
+                model_provider: candidate.metadata.provider.clone(),
+            })
         })
         .collect()
 }
@@ -340,30 +451,63 @@ fn write_catalog_entries(codex_home: &Path, candidates: &[CatalogRepairCandidate
         )
         .map_err(|error| CommandError::new("sqlite_query_failed", error.to_string()))?;
     for candidate in candidates {
-        observation_sequence += 1;
-        transaction
-            .execute(
-                "
-                insert into local_thread_catalog (
-                    host_id, thread_id, display_title, source_created_at, source_updated_at,
-                    cwd, source_kind, source_detail, model_provider, git_branch,
-                    observation_sequence, missing_candidate
-                ) values (
-                    'local', ?1, ?2, ?3, ?4, ?5, ?6, '', ?7, NULL, ?8, 0
+        let cwd = normalize_windows_extended_path(&candidate.metadata.cwd);
+        if candidate
+            .repair_codes
+            .iter()
+            .any(|code| code == "missing_catalog_entry")
+        {
+            observation_sequence += 1;
+            transaction
+                .execute(
+                    "
+                    insert into local_thread_catalog (
+                        host_id, thread_id, display_title, source_created_at, source_updated_at,
+                        cwd, source_kind, source_detail, model_provider, git_branch,
+                        observation_sequence, missing_candidate
+                    ) values (
+                        'local', ?1, ?2, ?3, ?4, ?5, ?6, '', ?7, NULL, ?8, 0
+                    )
+                    ",
+                    params![
+                        &candidate.metadata.thread_id,
+                        &candidate.display_title,
+                        candidate.source_created_at,
+                        candidate.source_updated_at,
+                        &cwd,
+                        &candidate.metadata.source,
+                        &candidate.metadata.provider,
+                        observation_sequence,
+                    ],
                 )
-                ",
-                params![
-                    &candidate.metadata.thread_id,
-                    &candidate.display_title,
-                    candidate.source_created_at,
-                    candidate.source_updated_at,
-                    &candidate.metadata.cwd,
-                    &candidate.metadata.source,
-                    &candidate.metadata.provider,
-                    observation_sequence,
-                ],
+                .map_err(|error| CommandError::new("catalog_insert_failed", error.to_string()))?;
+        } else if candidate.repair_codes.iter().any(|code| {
+            matches!(
+                code.as_str(),
+                "catalog_cwd_mismatch" | "catalog_title_stale"
             )
-            .map_err(|error| CommandError::new("catalog_insert_failed", error.to_string()))?;
+        }) {
+            transaction
+                .execute(
+                    "
+                    update local_thread_catalog
+                    set display_title=?1, source_created_at=?2, source_updated_at=?3,
+                        cwd=?4, source_kind=?5, source_detail='', model_provider=?6,
+                        missing_candidate=0
+                    where host_id='local' and thread_id=?7
+                    ",
+                    params![
+                        &candidate.display_title,
+                        candidate.source_created_at,
+                        candidate.source_updated_at,
+                        &cwd,
+                        &candidate.metadata.source,
+                        &candidate.metadata.provider,
+                        &candidate.metadata.thread_id,
+                    ],
+                )
+                .map_err(|error| CommandError::new("catalog_update_failed", error.to_string()))?;
+        }
     }
     transaction
         .commit()
@@ -371,8 +515,266 @@ fn write_catalog_entries(codex_home: &Path, candidates: &[CatalogRepairCandidate
     Ok(())
 }
 
-fn backup_inputs(codex_home: &Path) -> Vec<PathBuf> {
-    [
+fn repair_codes_for_metadata(
+    metadata: &SessionMetadata,
+    display_title: &str,
+    catalog_db: &Path,
+    catalog_entries: &BTreeMap<String, CatalogEntry>,
+    index_ids: &BTreeSet<String>,
+    state_db_paths: &[PathBuf],
+    lifecycle: &ThreadLifecycle,
+    has_rollout_internal_passthrough: bool,
+) -> Vec<String> {
+    let mut repair_codes = Vec::new();
+    let expected_cwd = normalize_windows_extended_path(&metadata.cwd);
+    if !catalog_db.exists() {
+        repair_codes.push("catalog_db_missing".to_string());
+    } else if let Some(entry) = catalog_entries.get(&metadata.thread_id) {
+        if entry.cwd.as_deref().unwrap_or_default() != expected_cwd {
+            repair_codes.push("catalog_cwd_mismatch".to_string());
+        }
+        if entry
+            .display_title
+            .as_deref()
+            .unwrap_or_default()
+            .trim()
+            .is_empty()
+            && !display_title.trim().is_empty()
+        {
+            repair_codes.push("catalog_title_stale".to_string());
+        }
+    } else {
+        repair_codes.push("missing_catalog_entry".to_string());
+    }
+    if lifecycle == &ThreadLifecycle::Active && !index_ids.contains(&metadata.thread_id) {
+        repair_codes.push("missing_session_index".to_string());
+    }
+    let expected_rollout_path = visible_path_string(&metadata.path);
+    for db in state_db_paths {
+        let entry = state_entry(db, &metadata.thread_id);
+        if !entry.exists {
+            repair_codes.push("missing_state_entry".to_string());
+            continue;
+        }
+        if entry.rollout_path.as_deref().unwrap_or_default() != expected_rollout_path {
+            repair_codes.push("state_rollout_path_mismatch".to_string());
+        }
+        if entry.cwd.as_deref().unwrap_or_default() != expected_cwd {
+            repair_codes.push("state_cwd_mismatch".to_string());
+        }
+    }
+    if has_rollout_internal_passthrough {
+        repair_codes.push(ROLLOUT_INTERNAL_METADATA_CODE.to_string());
+    }
+    repair_codes.sort();
+    repair_codes.dedup();
+    repair_codes
+}
+
+fn is_repairable_code(code: &str) -> bool {
+    matches!(
+        code,
+        "missing_catalog_entry"
+            | "catalog_cwd_mismatch"
+            | "catalog_title_stale"
+            | "missing_session_index"
+            | "missing_state_entry"
+            | "state_rollout_path_mismatch"
+            | "state_cwd_mismatch"
+            | ROLLOUT_INTERNAL_METADATA_CODE
+    )
+}
+
+fn rollout_has_internal_metadata_passthrough(raw: &[u8], path: &Path) -> Result<bool> {
+    let without_bom = if raw.starts_with(crate::codex::metadata::BOM) {
+        &raw[crate::codex::metadata::BOM.len()..]
+    } else {
+        raw
+    };
+    let text = std::str::from_utf8(without_bom).map_err(|error| {
+        CommandError::new(
+            "invalid_utf8",
+            format!("{} is not valid UTF-8 ({error})", path.display()),
+        )
+    })?;
+    for line in text.lines().filter(|line| !line.trim().is_empty()) {
+        let value: Value = serde_json::from_str(line).map_err(|error| {
+            CommandError::new(
+                "invalid_jsonl",
+                format!("{} has invalid JSONL row ({error})", path.display()),
+            )
+        })?;
+        if value
+            .get("payload")
+            .and_then(Value::as_object)
+            .is_some_and(|payload| payload.contains_key(ROLLOUT_INTERNAL_METADATA_KEY))
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn strip_rollout_internal_metadata_passthrough_for_candidates(
+    candidates: &[CatalogRepairCandidate],
+) -> Result<()> {
+    for candidate in candidates {
+        if !candidate
+            .repair_codes
+            .iter()
+            .any(|code| code == ROLLOUT_INTERNAL_METADATA_CODE)
+        {
+            continue;
+        }
+        let path = &candidate.metadata.path;
+        let raw = fs::read(path)
+            .map_err(|error| CommandError::io("read rollout", path.display(), error))?;
+        let Some(repaired) = strip_rollout_internal_metadata_passthrough(&raw, path)? else {
+            continue;
+        };
+        fs::write(path, repaired)
+            .map_err(|error| CommandError::io("write rollout", path.display(), error))?;
+    }
+    Ok(())
+}
+
+fn strip_rollout_internal_metadata_passthrough(raw: &[u8], path: &Path) -> Result<Option<Vec<u8>>> {
+    let has_bom = raw.starts_with(crate::codex::metadata::BOM);
+    let without_bom = if has_bom {
+        &raw[crate::codex::metadata::BOM.len()..]
+    } else {
+        raw
+    };
+    let text = std::str::from_utf8(without_bom).map_err(|error| {
+        CommandError::new(
+            "invalid_utf8",
+            format!("{} is not valid UTF-8 ({error})", path.display()),
+        )
+    })?;
+    let mut changed = false;
+    let mut output = Vec::with_capacity(raw.len());
+    if has_bom {
+        output.extend_from_slice(crate::codex::metadata::BOM);
+    }
+    for line in text.split_inclusive('\n') {
+        let (body, newline) = split_jsonl_line_suffix(line);
+        if body.trim().is_empty() {
+            output.extend_from_slice(line.as_bytes());
+            continue;
+        }
+        let mut value: Value = serde_json::from_str(body).map_err(|error| {
+            CommandError::new(
+                "invalid_jsonl",
+                format!("{} has invalid JSONL row ({error})", path.display()),
+            )
+        })?;
+        let removed = value
+            .get_mut("payload")
+            .and_then(Value::as_object_mut)
+            .and_then(|payload| payload.remove(ROLLOUT_INTERNAL_METADATA_KEY))
+            .is_some();
+        if removed {
+            changed = true;
+            let serialized = serde_json::to_string(&value).map_err(|error| {
+                CommandError::new(
+                    "invalid_jsonl",
+                    format!(
+                        "{} cannot serialize repaired JSONL row ({error})",
+                        path.display()
+                    ),
+                )
+            })?;
+            output.extend_from_slice(serialized.as_bytes());
+            output.extend_from_slice(newline.as_bytes());
+        } else {
+            output.extend_from_slice(line.as_bytes());
+        }
+    }
+    Ok(changed.then_some(output))
+}
+
+fn split_jsonl_line_suffix(line: &str) -> (&str, &str) {
+    if let Some(body) = line.strip_suffix("\r\n") {
+        (body, "\r\n")
+    } else if let Some(body) = line.strip_suffix('\n') {
+        (body, "\n")
+    } else {
+        (line, "")
+    }
+}
+
+fn ensure_session_index_entries(
+    codex_home: &Path,
+    candidates: &[CatalogRepairCandidate],
+) -> Result<()> {
+    let mut existing = session_index_ids(codex_home)?;
+    let mut entries = Vec::new();
+    for candidate in candidates {
+        if candidate.lifecycle != ThreadLifecycle::Active
+            || !candidate
+                .repair_codes
+                .iter()
+                .any(|code| code == "missing_session_index")
+            || !existing.insert(candidate.metadata.thread_id.clone())
+        {
+            continue;
+        }
+        entries.push(json!({
+            "id": &candidate.metadata.thread_id,
+            "thread_name": &candidate.display_title,
+            "updated_at": iso_from_ms(candidate.metadata.updated_at_ms),
+        }));
+    }
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let index_path = codex_home.join("session_index.jsonl");
+    if let Some(parent) = index_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| CommandError::io("create index parent", parent.display(), error))?;
+    }
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&index_path)
+        .map_err(|error| CommandError::io("open session index", index_path.display(), error))?;
+    for entry in entries {
+        writeln!(file, "{}", serde_json::to_string(&entry).unwrap()).map_err(|error| {
+            CommandError::io("write session index", index_path.display(), error)
+        })?;
+    }
+    Ok(())
+}
+
+fn state_repair_items(
+    candidates: &[CatalogRepairCandidate],
+) -> Vec<(SessionMetadata, ThreadLifecycle)> {
+    candidates
+        .iter()
+        .filter(|candidate| {
+            candidate.repair_codes.iter().any(|code| {
+                matches!(
+                    code.as_str(),
+                    "missing_state_entry" | "state_rollout_path_mismatch" | "state_cwd_mismatch"
+                )
+            })
+        })
+        .map(|candidate| {
+            let mut metadata = candidate.metadata.clone();
+            metadata.title = candidate.display_title.clone();
+            (metadata, candidate.lifecycle.clone())
+        })
+        .collect()
+}
+
+fn iso_from_ms(value: i64) -> String {
+    chrono::DateTime::from_timestamp_millis(value)
+        .unwrap_or_else(chrono::Utc::now)
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}
+
+fn backup_inputs(codex_home: &Path, candidates: &[CatalogRepairCandidate]) -> Vec<PathBuf> {
+    let mut inputs: Vec<PathBuf> = [
         "sqlite/codex-dev.db",
         "sqlite/codex-dev.db-wal",
         "sqlite/codex-dev.db-shm",
@@ -386,7 +788,19 @@ fn backup_inputs(codex_home: &Path) -> Vec<PathBuf> {
     ]
     .into_iter()
     .map(|relative| codex_home.join(relative))
-    .collect()
+    .collect();
+    inputs.extend(
+        candidates
+            .iter()
+            .filter(|candidate| {
+                candidate
+                    .repair_codes
+                    .iter()
+                    .any(|code| code == ROLLOUT_INTERNAL_METADATA_CODE)
+            })
+            .map(|candidate| candidate.metadata.path.clone()),
+    );
+    inputs
 }
 
 fn ensure_catalog_schema(connection: &Connection) -> Result<()> {
@@ -550,6 +964,25 @@ fn index_titles(codex_home: &Path) -> Result<BTreeMap<String, String>> {
     Ok(titles)
 }
 
+fn session_index_ids(codex_home: &Path) -> Result<BTreeSet<String>> {
+    let path = codex_home.join("session_index.jsonl");
+    if !path.exists() {
+        return Ok(BTreeSet::new());
+    }
+    let text = fs::read_to_string(&path)
+        .map_err(|error| CommandError::io("read session index", path.display(), error))?;
+    let mut ids = BTreeSet::new();
+    for line in text.lines().filter(|line| !line.trim().is_empty()) {
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if let Some(id) = value.get("id").and_then(Value::as_str) {
+            ids.insert(id.to_string());
+        }
+    }
+    Ok(ids)
+}
+
 fn first_state_title(codex_home: &Path, thread_id: &str) -> Option<String> {
     for db in state_dbs(codex_home) {
         let entry = state_entry(&db, thread_id);
@@ -581,7 +1014,9 @@ fn display_title(
 }
 
 fn project_name_from_cwd(cwd: &str) -> Option<String> {
-    cwd.trim()
+    let normalized = normalize_windows_extended_path(cwd);
+    normalized
+        .trim()
         .trim_end_matches(['/', '\\'])
         .split(['/', '\\'])
         .filter(|part| !part.is_empty())
@@ -592,7 +1027,8 @@ fn project_name_from_cwd(cwd: &str) -> Option<String> {
 }
 
 fn non_empty_project_path(cwd: &str) -> Option<String> {
-    let trimmed = cwd.trim();
+    let normalized = normalize_windows_extended_path(cwd);
+    let trimmed = normalized.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
@@ -655,7 +1091,11 @@ fn ps_process_names() -> Vec<String> {
 fn first_csv_field(line: &str) -> Option<&str> {
     let line = line.trim();
     if !line.starts_with('"') {
-        return line.split(',').next().map(str::trim).filter(|value| !value.is_empty());
+        return line
+            .split(',')
+            .next()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
     }
     let rest = &line[1..];
     let end = rest.find('"')?;
@@ -714,6 +1154,72 @@ mod tests {
             .unwrap();
     }
 
+    fn insert_catalog_row(path: &std::path::Path, thread_id: &str, display_title: &str) {
+        let connection = Connection::open(path).unwrap();
+        connection
+            .execute(
+                "
+                insert into local_thread_catalog (
+                    host_id, thread_id, display_title, source_created_at, source_updated_at,
+                    cwd, source_kind, source_detail, model_provider, git_branch,
+                    observation_sequence, missing_candidate
+                ) values (
+                    'local', ?1, ?2, 1781485200.0, 1781485260.0, 'D:\\work',
+                    'vscode', '', 'funai', NULL, 1, 0
+                )
+                ",
+                (thread_id, display_title),
+            )
+            .unwrap();
+    }
+
+    fn poison_state_paths(
+        state_db: &std::path::Path,
+        thread_id: &str,
+        rollout_path: &std::path::Path,
+    ) {
+        let connection = Connection::open(state_db).unwrap();
+        connection
+            .execute(
+                "update threads set rollout_path=?1, cwd=?2 where id=?3",
+                (
+                    format!(r"\\?\{}", rollout_path.display()),
+                    r"\\?\D:\work",
+                    thread_id,
+                ),
+            )
+            .unwrap();
+    }
+
+    fn set_state_paths(
+        state_db: &std::path::Path,
+        thread_id: &str,
+        rollout_path: &std::path::Path,
+        cwd: &str,
+    ) {
+        let connection = Connection::open(state_db).unwrap();
+        connection
+            .execute(
+                "update threads set rollout_path=?1, cwd=?2 where id=?3",
+                (visible_path_string(rollout_path), cwd, thread_id),
+            )
+            .unwrap();
+    }
+
+    fn write_jsonl_with_internal_passthrough(path: &std::path::Path, thread_id: &str) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(
+            path,
+            format!(
+                "{{\"timestamp\":\"2026-07-05T15:31:44.000Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"{thread_id}\",\"session_id\":\"{thread_id}\",\"timestamp\":\"2026-07-05T15:31:44.000Z\",\"cwd\":\"D:\\\\work\",\"source\":\"vscode\",\"model_provider\":\"funai\",\"cli_version\":\"0.142.5\",\"thread_source\":\"user\",\"base_instructions\":\"keep\",\"dynamic_tools\":[]}}}}\n\
+                 {{\"timestamp\":\"2026-07-05T15:31:45.000Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"message\",\"role\":\"user\",\"content\":[{{\"type\":\"input_text\",\"text\":\"hello\"}}],\"internal_chat_message_metadata_passthrough\":{{\"turn_id\":\"turn-1\"}}}}}}\n"
+            ),
+        )
+        .unwrap();
+    }
+
     #[test]
     fn scan_reports_active_session_missing_from_catalog() {
         let temp = tempfile::tempdir().unwrap();
@@ -734,6 +1240,8 @@ mod tests {
         let state_db = codex.join("state_5.sqlite");
         init_state_db(&state_db);
         insert_state_row_with_title(&state_db, thread_id, "funai", 0, "sqlite title");
+        let discovered_path = session_files(&codex).unwrap()[0].path.clone();
+        set_state_paths(&state_db, thread_id, &discovered_path, "D:\\work");
         init_catalog_db(&codex.join("sqlite/codex-dev.db"));
 
         let response = scan_codex_catalog_repair(&codex).unwrap();
@@ -766,6 +1274,8 @@ mod tests {
         let state_db = codex.join("state_5.sqlite");
         init_state_db(&state_db);
         insert_state_row_with_title(&state_db, thread_id, "funai", 0, "sqlite title");
+        let discovered_path = session_files(&codex).unwrap()[0].path.clone();
+        set_state_paths(&state_db, thread_id, &discovered_path, "D:\\work");
         let catalog_db = codex.join("sqlite/codex-dev.db");
         init_catalog_db(&catalog_db);
 
@@ -782,12 +1292,113 @@ mod tests {
         assert_eq!(result.planned_changes[0].action, "insert_catalog_entry");
         assert_eq!(result.planned_changes[0].display_title, "renamed title");
         assert_eq!(result.planned_changes[0].cwd, "D:\\work");
-        assert_eq!(result.planned_changes[0].model_provider.as_deref(), Some("funai"));
+        assert_eq!(
+            result.planned_changes[0].model_provider.as_deref(),
+            Some("funai")
+        );
         let connection = Connection::open(&catalog_db).unwrap();
         let count: i64 = connection
-            .query_row("select count(*) from local_thread_catalog", [], |row| row.get(0))
+            .query_row("select count(*) from local_thread_catalog", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn scan_selects_active_thread_when_index_or_state_visibility_is_missing() {
+        let temp = tempfile::tempdir().unwrap();
+        let codex = temp.path().join(".codex");
+        let thread_id = "019f32e8-178a-7b01-9a43-61e5a75d73ae";
+        write_jsonl(
+            &codex.join("sessions/2026/07/05/rollout-a-019f32e8-178a-7b01-9a43-61e5a75d73ae.jsonl"),
+            thread_id,
+            "funai",
+            false,
+            "json title",
+        );
+        fs::write(codex.join("session_index.jsonl"), "").unwrap();
+        init_state_db(&codex.join("state_5.sqlite"));
+        let catalog_db = codex.join("sqlite/codex-dev.db");
+        init_catalog_db(&catalog_db);
+        insert_catalog_row(&catalog_db, thread_id, "json title");
+
+        let response = scan_codex_catalog_repair(&codex).unwrap();
+
+        assert_eq!(response.summary.missing_catalog_entries, 0);
+        assert_eq!(response.summary.missing_session_index_entries, 1);
+        assert_eq!(response.summary.state_metadata_issues, 1);
+        assert_eq!(
+            response.rows[0].repair_codes,
+            vec!["missing_session_index", "missing_state_entry"]
+        );
+        assert!(response.rows[0].selected_by_default);
+    }
+
+    #[test]
+    fn scan_selects_active_thread_when_state_paths_are_extended_windows_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let codex = temp.path().join(".codex");
+        let thread_id = "019f32e8-178a-7b01-9a43-61e5a75d73ae";
+        let jsonl_path =
+            codex.join("sessions/2026/07/05/rollout-a-019f32e8-178a-7b01-9a43-61e5a75d73ae.jsonl");
+        write_jsonl(&jsonl_path, thread_id, "funai", false, "json title");
+        fs::write(
+            codex.join("session_index.jsonl"),
+            format!("{{\"id\":\"{thread_id}\",\"thread_name\":\"renamed title\"}}\n"),
+        )
+        .unwrap();
+        let state_db = codex.join("state_5.sqlite");
+        init_state_db(&state_db);
+        insert_state_row_with_title(&state_db, thread_id, "funai", 0, "renamed title");
+        poison_state_paths(&state_db, thread_id, &jsonl_path);
+        let catalog_db = codex.join("sqlite/codex-dev.db");
+        init_catalog_db(&catalog_db);
+        insert_catalog_row(&catalog_db, thread_id, "renamed title");
+
+        let response = scan_codex_catalog_repair(&codex).unwrap();
+
+        assert_eq!(
+            response.rows[0].repair_codes,
+            vec!["state_cwd_mismatch", "state_rollout_path_mismatch"]
+        );
+        assert_eq!(response.summary.state_metadata_issues, 1);
+        assert!(response.rows[0].selected_by_default);
+    }
+
+    #[test]
+    fn scan_selects_active_thread_with_rollout_internal_passthrough_metadata() {
+        let temp = tempfile::tempdir().unwrap();
+        let codex = temp.path().join(".codex");
+        let thread_id = "019f32e8-178a-7b01-9a43-61e5a75d73ae";
+        let jsonl_path =
+            codex.join("sessions/2026/07/05/rollout-a-019f32e8-178a-7b01-9a43-61e5a75d73ae.jsonl");
+        write_jsonl_with_internal_passthrough(&jsonl_path, thread_id);
+        fs::write(
+            codex.join("session_index.jsonl"),
+            format!("{{\"id\":\"{thread_id}\",\"thread_name\":\"renamed title\"}}\n"),
+        )
+        .unwrap();
+        let discovered_path = session_files(&codex).unwrap()[0].path.clone();
+        for state_db in [
+            codex.join("state_5.sqlite"),
+            codex.join("sqlite/state_5.sqlite"),
+        ] {
+            init_state_db(&state_db);
+            insert_state_row_with_title(&state_db, thread_id, "funai", 0, "renamed title");
+            set_state_paths(&state_db, thread_id, &discovered_path, "D:\\work");
+        }
+        let catalog_db = codex.join("sqlite/codex-dev.db");
+        init_catalog_db(&catalog_db);
+        insert_catalog_row(&catalog_db, thread_id, "renamed title");
+
+        let response = scan_codex_catalog_repair(&codex).unwrap();
+
+        assert_eq!(
+            response.rows[0].repair_codes,
+            vec!["rollout_internal_metadata_passthrough"]
+        );
+        assert!(response.rows[0].selected_by_default);
     }
 
     #[test]
@@ -864,5 +1475,166 @@ mod tests {
             )
         );
         assert_eq!(fs::read(&jsonl_path).unwrap(), original_jsonl);
+    }
+
+    #[test]
+    fn apply_repairs_existing_catalog_row_index_and_state_after_backup() {
+        let temp = tempfile::tempdir().unwrap();
+        let codex = temp.path().join(".codex");
+        let thread_id = "019f32e8-178a-7b01-9a43-61e5a75d73ae";
+        let jsonl_path =
+            codex.join("sessions/2026/07/05/rollout-a-019f32e8-178a-7b01-9a43-61e5a75d73ae.jsonl");
+        write_jsonl(&jsonl_path, thread_id, "funai", false, "json title");
+        fs::write(codex.join("session_index.jsonl"), "").unwrap();
+        init_state_db(&codex.join("state_5.sqlite"));
+        init_state_db(&codex.join("sqlite/state_5.sqlite"));
+        let catalog_db = codex.join("sqlite/codex-dev.db");
+        init_catalog_db(&catalog_db);
+        insert_catalog_row(&catalog_db, thread_id, "json title");
+        let original_jsonl = fs::read(&jsonl_path).unwrap();
+
+        let result = apply_codex_catalog_repair_with_process_checker(
+            CatalogRepairRequest {
+                codex_home: codex.display().to_string(),
+                thread_ids: vec![thread_id.to_string()],
+            },
+            || false,
+        )
+        .unwrap();
+
+        assert!(!result.dry_run);
+        assert_eq!(result.changed_threads, vec![thread_id.to_string()]);
+        assert!(result.backup_dir.is_some());
+        assert!(fs::read_to_string(codex.join("session_index.jsonl"))
+            .unwrap()
+            .contains(thread_id));
+        for state_db in [
+            codex.join("state_5.sqlite"),
+            codex.join("sqlite/state_5.sqlite"),
+        ] {
+            let connection = Connection::open(state_db).unwrap();
+            let row: (String, String, i32) = connection
+                .query_row(
+                    "select title, model_provider, archived from threads where id=?1",
+                    [thread_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .unwrap();
+            assert_eq!(row, ("json title".to_string(), "funai".to_string(), 0));
+        }
+        assert_eq!(fs::read(&jsonl_path).unwrap(), original_jsonl);
+    }
+
+    #[test]
+    fn apply_repairs_existing_state_path_and_cwd_after_backup() {
+        let temp = tempfile::tempdir().unwrap();
+        let codex = temp.path().join(".codex");
+        let thread_id = "019f32e8-178a-7b01-9a43-61e5a75d73ae";
+        let jsonl_path =
+            codex.join("sessions/2026/07/05/rollout-a-019f32e8-178a-7b01-9a43-61e5a75d73ae.jsonl");
+        write_jsonl(&jsonl_path, thread_id, "funai", false, "json title");
+        fs::write(
+            codex.join("session_index.jsonl"),
+            format!("{{\"id\":\"{thread_id}\",\"thread_name\":\"renamed title\"}}\n"),
+        )
+        .unwrap();
+        for state_db in [
+            codex.join("state_5.sqlite"),
+            codex.join("sqlite/state_5.sqlite"),
+        ] {
+            init_state_db(&state_db);
+            insert_state_row_with_title(&state_db, thread_id, "funai", 0, "renamed title");
+            poison_state_paths(&state_db, thread_id, &jsonl_path);
+        }
+        let catalog_db = codex.join("sqlite/codex-dev.db");
+        init_catalog_db(&catalog_db);
+        insert_catalog_row(&catalog_db, thread_id, "renamed title");
+        let original_jsonl = fs::read(&jsonl_path).unwrap();
+
+        let result = apply_codex_catalog_repair_with_process_checker(
+            CatalogRepairRequest {
+                codex_home: codex.display().to_string(),
+                thread_ids: vec![thread_id.to_string()],
+            },
+            || false,
+        )
+        .unwrap();
+
+        assert!(!result.dry_run);
+        assert_eq!(result.changed_threads, vec![thread_id.to_string()]);
+        assert_eq!(result.planned_changes.len(), 1);
+        assert_eq!(result.planned_changes[0].action, "upsert_state_entry");
+        for state_db in [
+            codex.join("state_5.sqlite"),
+            codex.join("sqlite/state_5.sqlite"),
+        ] {
+            let connection = Connection::open(state_db).unwrap();
+            let row: (String, String, String) = connection
+                .query_row(
+                    "select rollout_path, cwd, title from threads where id=?1",
+                    [thread_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .unwrap();
+            assert_eq!(
+                row,
+                (
+                    visible_path_string(&session_files(&codex).unwrap()[0].path),
+                    "D:\\work".to_string(),
+                    "renamed title".to_string(),
+                )
+            );
+        }
+        assert_eq!(fs::read(&jsonl_path).unwrap(), original_jsonl);
+    }
+
+    #[test]
+    fn apply_strips_rollout_internal_passthrough_metadata_after_backup() {
+        let temp = tempfile::tempdir().unwrap();
+        let codex = temp.path().join(".codex");
+        let thread_id = "019f32e8-178a-7b01-9a43-61e5a75d73ae";
+        let jsonl_path =
+            codex.join("sessions/2026/07/05/rollout-a-019f32e8-178a-7b01-9a43-61e5a75d73ae.jsonl");
+        write_jsonl_with_internal_passthrough(&jsonl_path, thread_id);
+        fs::write(
+            codex.join("session_index.jsonl"),
+            format!("{{\"id\":\"{thread_id}\",\"thread_name\":\"renamed title\"}}\n"),
+        )
+        .unwrap();
+        let discovered_path = session_files(&codex).unwrap()[0].path.clone();
+        for state_db in [
+            codex.join("state_5.sqlite"),
+            codex.join("sqlite/state_5.sqlite"),
+        ] {
+            init_state_db(&state_db);
+            insert_state_row_with_title(&state_db, thread_id, "funai", 0, "renamed title");
+            set_state_paths(&state_db, thread_id, &discovered_path, "D:\\work");
+        }
+        let catalog_db = codex.join("sqlite/codex-dev.db");
+        init_catalog_db(&catalog_db);
+        insert_catalog_row(&catalog_db, thread_id, "renamed title");
+        let original_jsonl = fs::read_to_string(&jsonl_path).unwrap();
+
+        let result = apply_codex_catalog_repair_with_process_checker(
+            CatalogRepairRequest {
+                codex_home: codex.display().to_string(),
+                thread_ids: vec![thread_id.to_string()],
+            },
+            || false,
+        )
+        .unwrap();
+
+        assert_eq!(result.planned_changes.len(), 1);
+        assert_eq!(
+            result.planned_changes[0].action,
+            "strip_rollout_internal_metadata_passthrough"
+        );
+        let repaired_jsonl = fs::read_to_string(&jsonl_path).unwrap();
+        assert!(!repaired_jsonl.contains("internal_chat_message_metadata_passthrough"));
+        assert!(repaired_jsonl.contains("\"text\":\"hello\""));
+        let backup_dir = std::path::Path::new(result.backup_dir.as_deref().unwrap());
+        let backup_jsonl = backup_dir
+            .join("sessions/2026/07/05/rollout-a-019f32e8-178a-7b01-9a43-61e5a75d73ae.jsonl");
+        assert_eq!(fs::read_to_string(backup_jsonl).unwrap(), original_jsonl);
     }
 }

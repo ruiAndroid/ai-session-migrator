@@ -1,4 +1,5 @@
 use crate::codex::metadata::{metadata_from_bytes, SessionMetadata, BOM};
+use crate::codex::paths::{normalize_windows_extended_path, visible_path_string};
 use crate::codex::sqlite::{state_dbs, state_entry};
 use crate::codex::{
     CommandError, DashboardModel, ProviderOption, ProviderOptionKind, ProviderOptions, Result,
@@ -286,7 +287,7 @@ fn thread_row(
         display_name,
         project_name: project_name_from_cwd(&metadata.cwd),
         project_path: non_empty_project_path(&metadata.cwd),
-        path: metadata.path.display().to_string(),
+        path: visible_path_string(&metadata.path),
         file_provider: metadata.provider.clone(),
         config_provider,
         lifecycle,
@@ -304,7 +305,9 @@ fn thread_row(
 }
 
 fn project_name_from_cwd(cwd: &str) -> Option<String> {
-    cwd.trim()
+    let normalized = normalize_windows_extended_path(cwd);
+    normalized
+        .trim()
         .trim_end_matches(['/', '\\'])
         .split(['/', '\\'])
         .filter(|part| !part.is_empty())
@@ -315,7 +318,8 @@ fn project_name_from_cwd(cwd: &str) -> Option<String> {
 }
 
 fn non_empty_project_path(cwd: &str) -> Option<String> {
-    let trimmed = cwd.trim();
+    let normalized = normalize_windows_extended_path(cwd);
+    let trimmed = normalized.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 

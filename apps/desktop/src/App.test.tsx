@@ -136,6 +136,8 @@ const catalogRepairScanResponse: CatalogRepairScanResponse = {
   summary: {
     totalThreads: 2,
     missingCatalogEntries: 1,
+    missingSessionIndexEntries: 0,
+    stateMetadataIssues: 0,
     selectedByDefault: 1,
     archivedThreads: 1
   },
@@ -374,7 +376,18 @@ test("shows codex catalog repair action after scan", async () => {
 
   await user.click(screen.getByRole("button", { name: /扫描会话/ }));
 
-  expect(await screen.findByRole("button", { name: /修复 Codex 可见索引/ })).toBeEnabled();
+  expect(await screen.findByRole("tab", { name: /会话迁移/ })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("tab", { name: /会话修复/ })).toHaveTextContent("2");
+  expect(screen.queryByRole("region", { name: "修复 Codex 会话可见性" })).not.toBeInTheDocument();
+  expect(screen.getByRole("article", { name: "活跃 provider 会话" })).toBeInTheDocument();
+
+  await user.click(screen.getByRole("tab", { name: /会话修复/ }));
+
+  expect(screen.getByRole("tab", { name: /会话修复/ })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("region", { name: "修复 Codex 会话可见性" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "修复 Codex 会话可见性" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /预览会话修复/ })).toBeEnabled();
+  expect(screen.queryByRole("article", { name: "活跃 provider 会话" })).not.toBeInTheDocument();
 });
 
 test("preview and apply catalog repair use selected default rows", async () => {
@@ -382,7 +395,8 @@ test("preview and apply catalog repair use selected default rows", async () => {
   const { user } = await renderWorkflow(api);
 
   await user.click(screen.getByRole("button", { name: /扫描会话/ }));
-  await user.click(await screen.findByRole("button", { name: /预览修复/ }));
+  await user.click(await screen.findByRole("tab", { name: /会话修复/ }));
+  await user.click(await screen.findByRole("button", { name: /预览会话修复/ }));
 
   await waitFor(() => {
     expect(api.previewCodexCatalogRepair).toHaveBeenCalledWith({
@@ -392,12 +406,179 @@ test("preview and apply catalog repair use selected default rows", async () => {
   });
   expect(screen.getByText("renamed title")).toBeInTheDocument();
 
-  await user.click(screen.getByRole("button", { name: /确认修复/ }));
+  await user.click(screen.getByRole("button", { name: /确认修复会话/ }));
 
   await waitFor(() => {
     expect(api.applyCodexCatalogRepair).toHaveBeenCalledWith({
       codexHome: fixtureCodexHome,
       threadIds: [activeThreadId]
+    });
+  });
+});
+
+test("catalog repair selects active rows missing index or state metadata", async () => {
+  const api = fakeApi();
+  const indexOnlyThreadId = "019f32e8-178a-7b01-9a43-61e5a75d73ae";
+  vi.mocked(api.scanCodexCatalogRepair).mockResolvedValueOnce({
+    catalogDbPath: `${fixtureCodexHome}\\sqlite\\codex-dev.db`,
+    summary: {
+      totalThreads: 1,
+      missingCatalogEntries: 0,
+      missingSessionIndexEntries: 1,
+      stateMetadataIssues: 1,
+      selectedByDefault: 1,
+      archivedThreads: 0
+    },
+    rows: [
+      {
+        threadId: indexOnlyThreadId,
+        displayTitle: "visible metadata only",
+        lifecycle: "active",
+        projectName: "fun-claw",
+        projectPath: "D:\\dev\\AI\\AIPro\\fun-claw",
+        path: `${fixtureCodexHome}\\sessions\\rollout-c.jsonl`,
+        fileProvider: "funai",
+        repairCodes: ["missing_session_index", "missing_state_entry"],
+        selectedByDefault: true,
+        updatedAtMs: 1781484460000
+      }
+    ]
+  });
+  const { user } = await renderWorkflow(api);
+
+  await user.click(screen.getByRole("button", { name: /扫描会话/ }));
+  await user.click(await screen.findByRole("tab", { name: /会话修复/ }));
+  await user.click(await screen.findByRole("button", { name: /预览会话修复/ }));
+
+  await waitFor(() => {
+    expect(api.previewCodexCatalogRepair).toHaveBeenCalledWith({
+      codexHome: fixtureCodexHome,
+      threadIds: [indexOnlyThreadId]
+    });
+  });
+});
+
+test("catalog repair selects active rows with stale state path metadata", async () => {
+  const api = fakeApi();
+  const staleStateThreadId = "019f32e8-178a-7b01-9a43-61e5a75d73ae";
+  vi.mocked(api.scanCodexCatalogRepair).mockResolvedValueOnce({
+    catalogDbPath: `${fixtureCodexHome}\\sqlite\\codex-dev.db`,
+    summary: {
+      totalThreads: 1,
+      missingCatalogEntries: 0,
+      missingSessionIndexEntries: 0,
+      stateMetadataIssues: 1,
+      selectedByDefault: 1,
+      archivedThreads: 0
+    },
+    rows: [
+      {
+        threadId: staleStateThreadId,
+        displayTitle: "stale state paths",
+        lifecycle: "active",
+        projectName: "fun-claw",
+        projectPath: "D:\\dev\\AI\\AIPro\\fun-claw",
+        path: `${fixtureCodexHome}\\sessions\\rollout-c.jsonl`,
+        fileProvider: "funai",
+        repairCodes: ["state_rollout_path_mismatch", "state_cwd_mismatch"],
+        selectedByDefault: true,
+        updatedAtMs: 1781484460000
+      }
+    ]
+  });
+  const { user } = await renderWorkflow(api);
+
+  await user.click(screen.getByRole("button", { name: /扫描会话/ }));
+  await user.click(await screen.findByRole("tab", { name: /会话修复/ }));
+  await user.click(await screen.findByRole("button", { name: /预览会话修复/ }));
+
+  await waitFor(() => {
+    expect(api.previewCodexCatalogRepair).toHaveBeenCalledWith({
+      codexHome: fixtureCodexHome,
+    threadIds: [staleStateThreadId]
+    });
+  });
+});
+
+test("catalog repair summary shows state metadata issues", async () => {
+  const api = fakeApi();
+  vi.mocked(api.scanCodexCatalogRepair).mockResolvedValueOnce({
+    catalogDbPath: `${fixtureCodexHome}\\sqlite\\codex-dev.db`,
+    summary: {
+      totalThreads: 1,
+      missingCatalogEntries: 0,
+      missingSessionIndexEntries: 0,
+      stateMetadataIssues: 1,
+      selectedByDefault: 1,
+      archivedThreads: 0
+    },
+    rows: [
+      {
+        threadId: "019f32e8-178a-7b01-9a43-61e5a75d73ae",
+        displayTitle: "stale state paths",
+        lifecycle: "active",
+        projectName: "fun-claw",
+        projectPath: "D:\\dev\\AI\\AIPro\\fun-claw",
+        path: `${fixtureCodexHome}\\sessions\\rollout-c.jsonl`,
+        fileProvider: "funai",
+        repairCodes: ["state_cwd_mismatch"],
+        selectedByDefault: true,
+        updatedAtMs: 1781484460000
+      }
+    ]
+  } as CatalogRepairScanResponse);
+  const { user } = await renderWorkflow(api);
+
+  await user.click(screen.getByRole("button", { name: /扫描会话|鎵弿浼氳瘽/ }));
+  await user.click(await screen.findByRole("tab", { name: /会话修复|浼氳瘽淇/ }));
+
+  const repairSummary = await screen.findByLabelText(/Codex catalog 修复摘要|Codex catalog 淇鎽樿/);
+  const stateCard = within(repairSummary).getByText("state 待修复").closest("div");
+  expect(stateCard).not.toBeNull();
+  expect(within(stateCard as HTMLElement).getByText("1")).toBeInTheDocument();
+});
+
+test("catalog repair selects active rows with rollout compatibility metadata", async () => {
+  const api = fakeApi();
+  const compatibilityThreadId = "019f32e8-178a-7b01-9a43-61e5a75d73ae";
+  vi.mocked(api.scanCodexCatalogRepair).mockResolvedValueOnce({
+    catalogDbPath: `${fixtureCodexHome}\\sqlite\\codex-dev.db`,
+    summary: {
+      totalThreads: 1,
+      missingCatalogEntries: 0,
+      missingSessionIndexEntries: 0,
+      stateMetadataIssues: 0,
+      selectedByDefault: 1,
+      archivedThreads: 0
+    },
+    rows: [
+      {
+        threadId: compatibilityThreadId,
+        displayTitle: "rollout compatibility",
+        lifecycle: "active",
+        projectName: "fun-claw",
+        projectPath: "D:\\dev\\AI\\AIPro\\fun-claw",
+        path: `${fixtureCodexHome}\\sessions\\rollout-c.jsonl`,
+        fileProvider: "funai",
+        repairCodes: ["rollout_internal_metadata_passthrough"],
+        selectedByDefault: true,
+        updatedAtMs: 1781484460000
+      }
+    ]
+  } as CatalogRepairScanResponse);
+  const { user } = await renderWorkflow(api);
+
+  await user.click(screen.getByRole("button", { name: /鎵弿浼氳瘽|扫描会话/ }));
+  await user.click(await screen.findByRole("tab", { name: /浼氬话淇|浼氳瘽淇|会话修复/ }));
+
+  expect(await screen.findByText("会话兼容性待修复")).toBeInTheDocument();
+
+  await user.click(await screen.findByRole("button", { name: /棰勮浼氳瘽淇|预览会话修复/ }));
+
+  await waitFor(() => {
+    expect(api.previewCodexCatalogRepair).toHaveBeenCalledWith({
+      codexHome: fixtureCodexHome,
+      threadIds: [compatibilityThreadId]
     });
   });
 });
@@ -411,8 +592,9 @@ test("catalog repair process-running error tells user to close Codex", async () 
   const { user } = await renderWorkflow(api);
 
   await user.click(screen.getByRole("button", { name: /扫描会话/ }));
-  await user.click(await screen.findByRole("button", { name: /预览修复/ }));
-  await user.click(await screen.findByRole("button", { name: /确认修复/ }));
+  await user.click(await screen.findByRole("tab", { name: /会话修复/ }));
+  await user.click(await screen.findByRole("button", { name: /预览会话修复/ }));
+  await user.click(await screen.findByRole("button", { name: /确认修复会话/ }));
 
   expect(await screen.findByRole("alert")).toHaveTextContent("请先退出 Codex");
 });

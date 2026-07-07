@@ -213,20 +213,19 @@ fn index_titles(codex_home: &Path) -> Result<BTreeMap<String, String>> {
 fn sqlite_titles(codex_home: &Path) -> Result<BTreeMap<String, String>> {
     let mut titles = BTreeMap::new();
     for db in state_dbs(codex_home) {
-        let Ok(connection) = rusqlite::Connection::open_with_flags(
-            &db,
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-        ) else {
-            continue;
-        };
-        let Ok(mut statement) =
-            connection.prepare("select id, title from threads where title is not null and trim(title) != ''")
+        let Ok(connection) =
+            rusqlite::Connection::open_with_flags(&db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
         else {
             continue;
         };
-        let Ok(rows) = statement
-            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        let Ok(mut statement) = connection
+            .prepare("select id, title from threads where title is not null and trim(title) != ''")
         else {
+            continue;
+        };
+        let Ok(rows) = statement.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        }) else {
             continue;
         };
         for row in rows {
