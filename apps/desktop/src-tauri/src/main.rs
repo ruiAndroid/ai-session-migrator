@@ -7,7 +7,7 @@ use ai_session_migrator::codex::{
     self, ArchiveRequest, ArchiveResult, CatalogRepairRequest, CatalogRepairResult,
     CatalogRepairScanResponse, CommandError, DeleteArchivedRequest, DeleteArchivedResult,
     MigrationRequest, MigrationResult, ProviderRestartRequest, ProviderRestartResult, ScanResponse,
-    SessionTranscript, SessionTranscriptRequest,
+    SessionExportRequest, SessionExportResult, SessionTranscript, SessionTranscriptRequest,
 };
 use std::process::Command;
 use tauri::{
@@ -227,6 +227,20 @@ async fn read_session_transcript(
 }
 
 #[tauri::command]
+async fn export_session(
+    request: SessionExportRequest,
+) -> std::result::Result<SessionExportResult, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || codex::export_session(request))
+        .await
+        .map_err(|error| {
+            CommandError::new(
+                "session_export_task_failed",
+                format!("failed to run session export: {error}"),
+            )
+        })?
+}
+
+#[tauri::command]
 fn switch_provider_and_restart(
     request: ProviderRestartRequest,
 ) -> std::result::Result<ProviderRestartResult, CommandError> {
@@ -295,6 +309,7 @@ fn main() {
             apply_archive_sessions,
             apply_activate_sessions,
             read_session_transcript,
+            export_session,
             switch_provider_and_restart,
             open_path
         ])

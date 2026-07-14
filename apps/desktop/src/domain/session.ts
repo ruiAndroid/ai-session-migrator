@@ -113,6 +113,19 @@ export type SessionTranscriptRequest = {
   path: string;
 };
 
+export type SessionExportRequest = {
+  codexHome: string;
+  threadId: string;
+  sourcePath: string;
+  destinationPath: string;
+};
+
+export type SessionExportResult = {
+  threadId: string;
+  destinationPath: string;
+  bytesWritten: number;
+};
+
 export type ArchiveResult = {
   changedThreads: string[];
   backupDir: string | null;
