@@ -3,6 +3,7 @@ pub mod backup;
 pub mod catalog_repair;
 pub mod deletion;
 pub mod error;
+pub mod export;
 pub mod metadata;
 pub mod migration;
 pub mod paths;
@@ -124,6 +125,23 @@ pub struct SessionTranscriptRequest {
     pub codex_home: String,
     pub thread_id: String,
     pub path: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionExportRequest {
+    pub codex_home: String,
+    pub thread_id: String,
+    pub source_path: String,
+    pub destination_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionExportResult {
+    pub thread_id: String,
+    pub destination_path: String,
+    pub bytes_written: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -260,6 +278,10 @@ pub fn apply_activate_sessions(request: ArchiveRequest) -> Result<ArchiveResult>
 
 pub fn read_session_transcript(request: SessionTranscriptRequest) -> Result<SessionTranscript> {
     transcript::read_session_transcript(request)
+}
+
+pub fn export_session(request: SessionExportRequest) -> Result<SessionExportResult> {
+    export::export_session(request)
 }
 
 pub fn switch_provider_and_restart(
