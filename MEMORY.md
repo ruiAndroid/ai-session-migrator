@@ -16,6 +16,8 @@
 
 ## Session Notes
 
+- 2026-07-14: 单会话导出固定为通过系统“另存为”逐字节复制原始 `.jsonl`；不复用会截断/重组内容的“查看记录”接口。Rust 后端必须校验源文件位于当前 Codex Home 的 `sessions` 或 `archived_sessions`，导出不修改源会话、索引或 SQLite，也不要求退出 Codex。
+
 - 2026-07-07: GitHub release workflow now reads `docs/release-notes-${{ github.ref_name }}.md` for tag-triggered releases; before pushing a new `vX.Y.Z` tag, bump package/Tauri/Cargo versions and add the matching `docs/release-notes-vX.Y.Z.md` so GitHub Actions can publish the release body and artifacts consistently.
 
 - 2026-07-07: `apps/desktop/src/styles.test.ts` 这类直接读取 CSS 文本的测试在 Windows 工作区会遇到 CRLF 行尾；如果 selector 断言包含换行，先把读取内容标准化为 LF，避免把真实样式存在误判成规则缺失。

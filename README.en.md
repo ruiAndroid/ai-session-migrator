@@ -30,6 +30,7 @@ AI Session Migrator gives you a safer desktop workflow:
 - **Provider migration**: migrate selected sessions from one provider to another.
 - **Target provider picker**: choose discovered providers or type a custom provider.
 - **Active/archived session awareness**: active sessions are shown first; archived sessions are labeled.
+- **Raw session export**: save any active or archived session as its untouched `.jsonl` through the native Save As dialog.
 - **Archived cleanup**: delete selected archived sessions after confirmation and backup.
 - **Backups before writes**: migration and deletion create backup directories first.
 - **Preview and confirmation**: review planned changes before applying them.
