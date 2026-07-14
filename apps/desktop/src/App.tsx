@@ -8,6 +8,7 @@ import {
   ChevronDown,
   ChevronRight,
   Copy,
+  Download,
   FileText,
   FolderOpen,
   HardDrive,
@@ -26,6 +27,8 @@ import type { DesktopActions } from "./domain/desktopActions";
 import { tauriDesktopActions } from "./domain/desktopActions";
 import type { MigrationApi } from "./domain/migrationApi";
 import { tauriMigrationApi } from "./domain/migrationApi";
+import type { SessionExportDialog } from "./domain/sessionExportDialog";
+import { tauriSessionExportDialog } from "./domain/sessionExportDialog";
 import type {
   CatalogRepairRequest,
   CatalogRepairResult,
@@ -50,6 +53,7 @@ type DefaultCodexHomeResolver = () => Promise<string>;
 type AppProps = {
   migrationApi?: MigrationApi;
   desktopActions?: DesktopActions;
+  sessionExportDialog?: SessionExportDialog;
   resolveDefaultCodexHome?: DefaultCodexHomeResolver;
   showStartupSplash?: boolean;
   startupSplashDurationMs?: number;
@@ -65,6 +69,7 @@ type LoadingState =
   | "delete"
   | "archive"
   | "activate"
+  | "export"
   | "restart";
 
 type WorkspaceTab = "migration" | "catalogRepair";
@@ -82,6 +87,7 @@ type DisplayError = {
 
 type CompletionNotice = {
   message: string;
+  detail?: string | null;
   backupDir?: string | null;
   restartTargetProvider?: string | null;
   restartResult?: ProviderRestartResult | null;
@@ -90,6 +96,7 @@ type CompletionNotice = {
 export default function App({
   migrationApi = tauriMigrationApi,
   desktopActions = tauriDesktopActions,
+  sessionExportDialog = tauriSessionExportDialog,
   resolveDefaultCodexHome = resolveDesktopCodexHome,
   showStartupSplash = true,
   startupSplashDurationMs
@@ -117,6 +124,7 @@ export default function App({
   const [catalogRepairPreviewRequestKey, setCatalogRepairPreviewRequestKey] = useState("");
   const [completionNotice, setCompletionNotice] = useState<CompletionNotice | null>(null);
   const [loading, setLoading] = useState<LoadingState>("idle");
+  const [exportingThreadId, setExportingThreadId] = useState<string | null>(null);
   const [error, setError] = useState<DisplayError | null>(null);
   const [confirmingApply, setConfirmingApply] = useState(false);
   const [pendingDeleteArchivedThreadIds, setPendingDeleteArchivedThreadIds] = useState<string[] | null>(null);
@@ -547,6 +555,37 @@ export default function App({
     setDetailsRow(row);
   }
 
+  async function handleExportSession(row: ThreadRow) {
+    if (loading !== "idle") {
+      return;
+    }
+    try {
+      const destinationPath = await sessionExportDialog.chooseDestination(row.path);
+      if (!destinationPath) {
+        return;
+      }
+      setLoading("export");
+      setExportingThreadId(row.threadId);
+      setError(null);
+      setCompletionNotice(null);
+      const result = await migrationApi.exportSession({
+        codexHome: codexHome.trim(),
+        threadId: row.threadId,
+        sourcePath: row.path,
+        destinationPath
+      });
+      setCompletionNotice({
+        message: `已导出会话：${row.displayName}`,
+        detail: result.destinationPath
+      });
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setExportingThreadId(null);
+      setLoading("idle");
+    }
+  }
+
   async function openTranscript(row: ThreadRow) {
     if (loading !== "idle") {
       return;
@@ -930,6 +969,8 @@ export default function App({
                   onToggleSelected={() => toggleSession(row.threadId)}
                   onOpenDetails={() => openDetails(row)}
                   onOpenTranscript={() => openTranscript(row)}
+                  onExport={() => handleExportSession(row)}
+                  exporting={exportingThreadId === row.threadId}
                   onArchive={() => handleArchiveRow(row)}
                   onActivate={() => handleActivateRow(row)}
                   onDeleteArchived={() => handleDeleteArchivedRow(row)}
@@ -1063,6 +1104,8 @@ function SessionItem({
   onToggleSelected,
   onOpenDetails,
   onOpenTranscript,
+  onExport,
+  exporting,
   onArchive,
   onActivate,
   onDeleteArchived
@@ -1073,6 +1116,8 @@ function SessionItem({
   onToggleSelected: () => void;
   onOpenDetails: () => void;
   onOpenTranscript: () => void;
+  onExport: () => void;
+  exporting: boolean;
   onArchive: () => void;
   onActivate: () => void;
   onDeleteArchived: () => void;
@@ -1142,6 +1187,10 @@ function SessionItem({
             </button>
           </>
         )}
+        <button className="row-action-button" type="button" disabled={disabled} onClick={onExport}>
+          <Download aria-hidden="true" size={15} />
+          {exporting ? "导出中" : "导出"}
+        </button>
       </div>
     </article>
   );
@@ -1388,7 +1437,13 @@ function CompletionNoticePanel({
       </span>
       <div className="completion-copy">
         <strong>{notice.message}</strong>
-        {notice.backupDir ? <span>{notice.backupDir}</span> : <span>本次操作未生成备份目录。</span>}
+        {notice.detail ? (
+          <span>{notice.detail}</span>
+        ) : notice.backupDir ? (
+          <span>{notice.backupDir}</span>
+        ) : (
+          <span>本次操作未生成备份目录。</span>
+        )}
         {notice.restartResult ? (
           <span className={notice.restartResult.restarted ? "restart-result" : "restart-result warning"}>
             {notice.restartResult.restarted ? "已重启 Codex" : "请手动重启 Codex"}
@@ -1530,6 +1585,11 @@ const loadingCopy: Record<Exclude<LoadingState, "idle">, { title: string; body: 
     title: "正在激活",
     body: "正在创建备份并恢复会话文件",
     note: "请保持应用打开，完成后会自动刷新列表。"
+  },
+  export: {
+    title: "正在导出",
+    body: "正在复制原始会话文件",
+    note: "导出不会修改源会话或 Codex 索引。"
   },
   restart: {
     title: "正在重启",
@@ -2049,6 +2109,15 @@ function localizedCommandErrorMessage(error: CommandError) {
     sqlite_insert_failed: "写入 sqlite 可见性元数据失败。",
     sqlite_delete_failed: "删除 sqlite 归档会话记录失败。",
     backup_directory_collision: "创建备份目录失败，请稍后重试。",
+    session_export_source_missing: "源会话文件已不存在，请重新扫描后再试。",
+    session_export_source_invalid: "源会话文件无法读取，请重新扫描后再试。",
+    session_export_source_outside_codex_home: "源会话不在当前 Codex 目录中，请重新扫描后再试。",
+    session_export_source_format_invalid: "源会话不是原始 JSONL 文件，无法导出。",
+    session_export_destination_invalid: "导出位置无效，请重新选择保存位置。",
+    session_export_destination_format_invalid: "导出文件必须使用 .jsonl 后缀。",
+    session_export_source_destination_same: "导出位置不能覆盖源会话文件。",
+    session_export_write_failed: "写入导出文件失败，请检查保存位置和磁盘空间。",
+    session_export_task_failed: "导出任务未能完成，请重试。",
     post_backup_write_failed: fallback,
     io_error: fallback
   };

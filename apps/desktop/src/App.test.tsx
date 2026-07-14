@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import App from "./App";
 import type { MigrationApi } from "./domain/migrationApi";
+import type { SessionExportDialog } from "./domain/sessionExportDialog";
 import type { CatalogRepairScanResponse, MigrationResult, ScanResponse, SessionTranscript } from "./domain/session";
 
 const fixtureCodexHome = "D:\\Codex\\fixture\\.codex";
@@ -18,6 +19,14 @@ function fakeDesktopActions() {
   return {
     openPath: vi.fn().mockResolvedValue(undefined),
     copyText: vi.fn().mockResolvedValue(undefined)
+  };
+}
+
+function fakeSessionExportDialog(
+  destinationPath: string | null = "D:\\Exports\\rollout-a.jsonl"
+): SessionExportDialog {
+  return {
+    chooseDestination: vi.fn().mockResolvedValue(destinationPath)
   };
 }
 
@@ -259,6 +268,11 @@ function fakeApi(): MigrationApi {
       restarted: true,
       restartMessage: "Codex 已按新 provider 配置重新启动。"
     }),
+    exportSession: vi.fn().mockResolvedValue({
+      threadId: activeThreadId,
+      destinationPath: "D:\\Exports\\rollout-a.jsonl",
+      bytesWritten: 42
+    }),
     readSessionTranscript: vi.fn().mockResolvedValue(activeTranscript)
   };
 }
@@ -284,6 +298,23 @@ async function renderWorkflow(api = fakeApi()) {
   );
   await screen.findByDisplayValue(fixtureCodexHome);
   return { api, user };
+}
+
+async function renderWorkflowWithExportDialog(
+  api = fakeApi(),
+  sessionExportDialog = fakeSessionExportDialog()
+) {
+  const user = userEvent.setup();
+  render(
+    <App
+      migrationApi={api}
+      sessionExportDialog={sessionExportDialog}
+      resolveDefaultCodexHome={() => Promise.resolve(fixtureCodexHome)}
+      showStartupSplash={false}
+    />
+  );
+  await screen.findByDisplayValue(fixtureCodexHome);
+  return { api, sessionExportDialog, user };
 }
 
 async function renderWorkflowWithDesktopActions(api = fakeApi(), desktopActions = fakeDesktopActions()) {
@@ -676,6 +707,88 @@ test("session transcript opens in a read-only dialog", async () => {
 
   await user.click(within(dialog).getByRole("button", { name: "关闭" }));
   expect(screen.queryByRole("dialog", { name: "活跃 provider 会话 会话记录" })).not.toBeInTheDocument();
+});
+
+test("exports an active session from the row action", async () => {
+  const api = fakeApi();
+  const sessionExportDialog = fakeSessionExportDialog();
+  const { user } = await renderWorkflowWithExportDialog(api, sessionExportDialog);
+
+  await user.click(screen.getByRole("button", { name: /扫描会话/ }));
+  const activeRow = await screen.findByRole("article", { name: "活跃 provider 会话" });
+  await user.click(within(activeRow).getByRole("button", { name: "导出" }));
+
+  expect(sessionExportDialog.chooseDestination).toHaveBeenCalledWith(
+    `${fixtureCodexHome}\\sessions\\rollout-a.jsonl`
+  );
+  expect(api.exportSession).toHaveBeenCalledWith({
+    codexHome: fixtureCodexHome,
+    threadId: activeThreadId,
+    sourcePath: `${fixtureCodexHome}\\sessions\\rollout-a.jsonl`,
+    destinationPath: "D:\\Exports\\rollout-a.jsonl"
+  });
+  expect(await screen.findByRole("status")).toHaveTextContent("D:\\Exports\\rollout-a.jsonl");
+});
+
+test("archived session rows also expose raw export", async () => {
+  const { user } = await renderWorkflowWithExportDialog();
+
+  await user.click(screen.getByRole("button", { name: /扫描会话/ }));
+  await user.selectOptions(screen.getByLabelText("来源 provider"), "gmn");
+  const archivedRow = await screen.findByRole("article", { name: "归档 provider 会话" });
+
+  expect(within(archivedRow).getByRole("button", { name: "导出" })).toBeEnabled();
+});
+
+test("cancelling session export does not call the backend", async () => {
+  const api = fakeApi();
+  const { user } = await renderWorkflowWithExportDialog(api, fakeSessionExportDialog(null));
+
+  await user.click(screen.getByRole("button", { name: /扫描会话/ }));
+  const activeRow = await screen.findByRole("article", { name: "活跃 provider 会话" });
+  await user.click(within(activeRow).getByRole("button", { name: "导出" }));
+
+  expect(api.exportSession).not.toHaveBeenCalled();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+test("session export shows a blocking loading dialog while copying", async () => {
+  const api = fakeApi();
+  const pendingExport = deferred<Awaited<ReturnType<MigrationApi["exportSession"]>>>();
+  vi.mocked(api.exportSession).mockReturnValueOnce(pendingExport.promise);
+  const { user } = await renderWorkflowWithExportDialog(api);
+
+  await user.click(screen.getByRole("button", { name: /扫描会话/ }));
+  const activeRow = await screen.findByRole("article", { name: "活跃 provider 会话" });
+  await user.click(within(activeRow).getByRole("button", { name: "导出" }));
+
+  await expectBlockingLoadingDialog("正在导出", "正在复制原始会话文件");
+
+  pendingExport.resolve({
+    threadId: activeThreadId,
+    destinationPath: "D:\\Exports\\rollout-a.jsonl",
+    bytesWritten: 42
+  });
+  await waitFor(() => {
+    expect(screen.queryByRole("dialog", { name: "正在导出" })).not.toBeInTheDocument();
+  });
+});
+
+test("missing export source tells the user to rescan", async () => {
+  const api = fakeApi();
+  vi.mocked(api.exportSession).mockRejectedValueOnce({
+    code: "session_export_source_missing",
+    message: "source missing"
+  });
+  const { user } = await renderWorkflowWithExportDialog(api);
+
+  await user.click(screen.getByRole("button", { name: /扫描会话/ }));
+  const activeRow = await screen.findByRole("article", { name: "活跃 provider 会话" });
+  await user.click(within(activeRow).getByRole("button", { name: "导出" }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "源会话文件已不存在，请重新扫描后再试。"
+  );
 });
 
 test("session transcript dialog constrains very long titles", async () => {
