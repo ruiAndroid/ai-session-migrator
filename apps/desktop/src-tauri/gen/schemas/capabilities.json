@@ -1,1 +1,1 @@
-{}
+{"default":{"identifier":"default","description":"Native Save As access for the main AI Session Migrator window.","local":true,"windows":["main"],"permissions":["core:default","dialog:allow-save"]}}

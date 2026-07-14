@@ -276,6 +276,7 @@ fn open_path(path: String) -> std::result::Result<(), String> {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             setup_system_tray(app)?;
             Ok(())
